@@ -1,0 +1,12 @@
+config BR2_PACKAGE_NVRAMTOOL
+	bool "nvramtool"
+	depends on BR2_i386 || BR2_x86_64
+	help
+      nvramtool is a utility for reading/writing coreboot parameters in NVRAM/CMOS
+      and displaying information from the so-called 'coreboot table'.
+      The coreboot table resides in low physical memory. It is created at
+      boot time by coreboot, and contains various system information such as
+      the type of mainboard in use. It specifies locations in the NVRAM/CMOS
+      (nonvolatile RAM) where the coreboot parameters are stored.
+
+	  http://www.coreboot.org/

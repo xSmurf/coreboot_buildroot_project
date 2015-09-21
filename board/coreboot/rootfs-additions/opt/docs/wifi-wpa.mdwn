@@ -1,0 +1,12 @@
+# Connecting to a WPA network
+
+	# iw dev
+	# ip link set wlan0 up
+	# iw wlan0 scan
+	# wpa_passphrase <SSID> >> /etc/wpa_supplicant.conf
+	<PASSPHRASE>
+	# wpa_supplicant -i wlan0 -c /etc/wpa_supplicant.conf
+	# iw wlan0 link
+	# dhclient wlan0
+	# ping 8.8.8.8
+	# ip route add default via 10.0.0.138 dev wlan0

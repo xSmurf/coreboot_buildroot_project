@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# Start autodev
+#
+
+case "$1" in
+	start)
+		echo "Starting module autoload..."
+		/opt/sbin/autoload_modules
+	;;
+	stop)
+	;;
+	restart|reload)
+	;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+esac
+
+exit $?
