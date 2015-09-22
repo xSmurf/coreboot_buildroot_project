@@ -1,3 +1,7 @@
+menu "Networking applications"
+	source "$BR2_EXTERNAL/package/tlsdate/Config.in"
+endmenu
+
 menu "Coreboot"
 	source "$BR2_EXTERNAL/package/coreboot/cbfstool/Config.in"
 	source "$BR2_EXTERNAL/package/coreboot/ifdtool/Config.in"

@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# Set regulatory domain
+#
+
+do_start() {
+	COUNTRY=00 /sbin/crda
+}
+
+case "$1" in
+	start)
+		do_start;
+	;;
+	stop)
+	;;
+	restart|reload)
+		do_start;
+	;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+esac
+
+exit $?
+

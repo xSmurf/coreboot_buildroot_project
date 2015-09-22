@@ -1,0 +1,5 @@
+#!/bin/sh
+
+if [ "$IFACE" != "lo" ]; then
+	/usr/bin/macchanger -A "$IFACE"
+fi
