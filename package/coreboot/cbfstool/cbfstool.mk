@@ -18,7 +18,7 @@ define CBFSTOOL_BUILD_CMDS
 endef
 
 define CBFSTOOL_INSTALL_TARGET_CMDS
-	$(INSTALL) -m 0755 -D $(@D)/cbfstool $(TARGET_DIR)/usr/sbin/cbfstool
+	$(INSTALL) -m 0755 -D $(@D)/cbfstool $(TARGET_DIR)/usr/bin/cbfstool
 endef
 
 $(eval $(generic-package))

@@ -17,7 +17,7 @@ define IFDTOOL_BUILD_CMDS
 endef
 
 define IFDTOOL_INSTALL_TARGET_CMDS
-	$(INSTALL) -m 0755 -D $(@D)/ifdtool $(TARGET_DIR)/usr/sbin/ifdtool
+	$(INSTALL) -m 0755 -D $(@D)/ifdtool $(TARGET_DIR)/usr/bin/ifdtool
 endef
 
 $(eval $(generic-package))
