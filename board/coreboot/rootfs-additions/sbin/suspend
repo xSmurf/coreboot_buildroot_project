@@ -1,0 +1,10 @@
+#!/bin/sh
+
+if [ -e /sys/power/state ]; then
+	echo mem > /sys/power/state
+else
+	echo "System power state missing"
+	exit 1
+fi
+
+exit $?
