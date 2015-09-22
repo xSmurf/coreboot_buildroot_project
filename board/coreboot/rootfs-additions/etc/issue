@@ -5,7 +5,5 @@
                                                                
 ###############################################################
 
-After pluging new devices run `/opt/sbin/autoload_modules`.
-
 See extra documentation in `/opt/docs/`.
 
