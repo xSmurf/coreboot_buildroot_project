@@ -1,0 +1,10 @@
+config BR2_PACKAGE_CONNECTPROXY
+	bool "connect-proxy"
+	help
+	  connect-proxy: Establish TCP connection using SOCKS4/5 or HTTP tunnel
+	  
+	  connect-proxy is a simple relaying command to make tunnel TCP connection
+	  via SOCKS or HTTPS proxies.
+	  It is mainly intended to be used as proxy command of OpenSSH.
+	  
+	  https://bitbucket.org/gotoh/connect/
