@@ -16,7 +16,7 @@ define CONNECTPROXY_BUILD_CMDS
 endef
 
 define CONNECTPROXY_INSTALL_TARGET_CMDS
-	$(INSTALL) -m 0755 -D $(@D)/connect $(TARGET_DIR)/usr/bin/connect
+	$(INSTALL) -m 0755 -D $(@D)/connect-proxy $(TARGET_DIR)/usr/bin/connect-proxy
 endef
 
 $(eval $(generic-package))
