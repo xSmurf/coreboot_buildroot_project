@@ -1,1 +1,1 @@
-makeuser tor 125 tor 125 - /var/lib/tor - - Tor daemon user
+tor 125 tor 125 - /var/lib/tor - - Tor daemon user
