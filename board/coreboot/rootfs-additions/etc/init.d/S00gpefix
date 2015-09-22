@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# Start gpe01 fix
+#
+
+do_start() {
+	echo "disable" > /sys/firmware/acpi/interrupts/gpe01 2>/dev/null
+}
+
+case "$1" in
+	start)
+		do_start;
+	;;
+	stop)
+	;;
+	restart|reload)
+		do_start;
+	;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+esac
+
+exit $?
