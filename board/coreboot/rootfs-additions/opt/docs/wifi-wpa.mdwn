@@ -7,6 +7,6 @@
 	<PASSPHRASE>
 	# wpa_supplicant -i wlan0 -c /etc/wpa_supplicant.conf
 	# iw wlan0 link
-	# dhclient wlan0
+	# udhcpc -i wlan0
 	# ping 8.8.8.8
 	# ip route add default via 10.0.0.138 dev wlan0
