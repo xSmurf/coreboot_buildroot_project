@@ -1,0 +1,5 @@
+#!/bin/sh
+
+if [ "`echo $IFACE | sed -E 's/[0-9]+//'`" = "wlan" ]; then
+	/etc/init.d/S10setcrda start
+fi
