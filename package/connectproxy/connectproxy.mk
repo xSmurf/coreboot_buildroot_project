@@ -4,9 +4,9 @@
 #
 ################################################################################
 
-CONNECTPROXY_VERSION = master
-CONNECTPROXY_SITE = https://bitbucket.org/gotoh/connect
-CONNECTPROXY_SITE_METHOD = git
+CONNECTPROXY_VERSION = 1.100
+CONNECTPROXY_SOURCE = $(CONNECTPROXY_VERSION).tar.gz
+CONNECTPROXY_SITE = https://bitbucket.org/gotoh/connect/get/
 CONNECTPROXY_LICENSE = GPLv2
 CONNECTPROXY_CFLAGS = $(TARGET_CFLAGS) -I$(@D)
 CONNECTPROXY_CXXFLAGS = $(TARGET_CXXFLAGS) -I$(@D)
@@ -16,7 +16,7 @@ define CONNECTPROXY_BUILD_CMDS
 endef
 
 define CONNECTPROXY_INSTALL_TARGET_CMDS
-	$(INSTALL) -m 0755 -D $(@D)/connect-proxy $(TARGET_DIR)/usr/bin/connect-proxy
+	$(INSTALL) -m 0755 -D $(@D)/connect $(TARGET_DIR)/usr/bin/connect
 endef
 
 $(eval $(generic-package))
