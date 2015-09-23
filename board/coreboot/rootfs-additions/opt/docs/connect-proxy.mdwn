@@ -1,0 +1,7 @@
+To use connect proxy with ssh:
+
+	ssh -J connect -R remote -5 -S 127.0.0.1:9050 %h %p
+
+With scp:
+
+	scp -S connect -R remote -5 -S 127.0.0.1:9050 %h %p
