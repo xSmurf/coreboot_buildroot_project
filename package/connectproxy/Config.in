@@ -1,5 +1,5 @@
 config BR2_PACKAGE_CONNECTPROXY
-	bool "connect-proxy"
+	bool "connectproxy"
 	help
 	  connect-proxy: Establish TCP connection using SOCKS4/5 or HTTP tunnel
 	  
