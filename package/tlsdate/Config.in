@@ -1,6 +1,7 @@
 config BR2_PACKAGE_TLSDATE
 	bool "tlsdate"
-	depends on BR2_i386 || BR2_x86_64
+	depends on BR2_PACKAGE_LIBEVENT
+	depends on BR2_PACKAGE_OPENSSL
 	help
 	  tlsdate: secure parasitic rdate replacement
 	  
@@ -11,4 +12,3 @@ config BR2_PACKAGE_TLSDATE
 	  feed you malicious time information.
 	  
 	  https://github.com/ioerror/tlsdate
-

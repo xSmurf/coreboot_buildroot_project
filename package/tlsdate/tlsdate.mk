@@ -5,8 +5,8 @@
 ################################################################################
 
 TLSDATE_VERSION = master
-TLSDATE_SITE = https://github.com/ioerror/tlsdate/archive/master.zip
-TLSDATE_LICENSE = Other
+TLSDATE_SITE = https://github.com/ioerror/tlsdate.git
+TLSDATE_LICENSE = git
 TLSDATE_LICENSE_FILES = LICENSE
 TLSDATE_CFLAGS = $(TARGET_CFLAGS) -I$(@D)
 TLSDATE_CXXFLAGS = $(TARGET_CXXFLAGS) -I$(@D)
