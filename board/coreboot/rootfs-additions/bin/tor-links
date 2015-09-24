@@ -1,3 +1,3 @@
 #!/bin/sh
 
-/usr/bin/links -only-proxy -socks-prozy 127.0.0.1:9050
+/usr/bin/links -only-proxies 1 -socks-proxy 127.0.0.1:9050
