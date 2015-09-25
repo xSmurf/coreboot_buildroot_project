@@ -34,8 +34,13 @@ for ii in {12..2}; do
 	error_exit $?
 done
 
+# Set pax flax (tentative)
 echo "Setting paxflag on libcrypto ..."
 /sbin/paxctl -c $TARGET_DIR/usr/lib/libcrypto.so.1.0.0
 error_exit $?
 /sbin/paxctl -m $TARGET_DIR/usr/lib/libcrypto.so.1.0.0
 error_exit $?
+
+# Add symlink to gpg2 for convenience
+echo "Symlinking gpg2 ..."
+ln -s /usr/bin/gpg2 $TARGET_DIR/usr/bin/gpg
