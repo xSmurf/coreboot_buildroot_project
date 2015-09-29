@@ -1,0 +1,74 @@
+#!/bin/sh
+
+do_start() {
+	FILE=/usr/share/dict/hostname-list
+
+	if [ -f "/etc/hostname" ]; then
+		OLDHOST="$(cat /etc/hostname)"
+	else
+		OLDHOST="$(/bin/hostname)"
+	fi
+
+	if [ "${OLDHOST}" = "localhost" ]; then
+		ES=1
+
+		echo "Cannot randomize 'localhost', please change the hostname first to something sensible."
+
+		exit $ES
+	fi
+
+	# Make sure that our selected hostname doesn't appear anywhere in /etc,
+	#  this way it should be safe to sed the whole directory
+	#  we aren't doing this, but it could be useful in the future.
+	NOTFOUND=0
+	until [ "${NOTFOUND}" -gt "0" ]; do
+		WORD=$(/usr/bin/shuf -n1 "$FILE")
+
+		/bin/fgrep -r $WORD /etc/ 2>&1 >> /dev/null
+		NOTFOUND=$?
+	done
+
+	echo "Setting hostname to '$HOSTNAME'"
+
+	/bin/hostname $WORD
+
+	ES=$?
+
+	echo "$WORD" > /etc/hostname
+	echo "$OLDHOST" > /etc/hostname.old
+
+	sed -i "s/${OLDHOST}/${WORD}/g" /etc/hosts
+
+	exit $ES
+}
+
+do_status() {
+	HOSTNAME=$(/bin/hostname)
+
+	if [ "$HOSTNAME" ] ; then
+		return 0
+	else
+		return 4
+	fi
+}
+
+case "$1" in
+	start|restart|"")
+		do_start
+	;;
+	reload|force-reload)
+		echo "Error: argument '$1' not supported" >&2
+		exit 3
+	;;
+	stop)
+		# No-op
+	;;
+	status)
+		do_status
+		exit $?
+	;;
+	*)
+		echo "Usage: hostname-spoof [start|status|stop]" >&2
+		exit 3
+	;;
+esac
