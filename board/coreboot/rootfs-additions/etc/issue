@@ -8,3 +8,4 @@
 
 See extra documentation in `/opt/docs/`.
 
+* DHCP Client is: `udhcpc`.
