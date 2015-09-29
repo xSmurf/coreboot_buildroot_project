@@ -1,3 +1,12 @@
 #!/bin/sh
 
 find /sys -name modalias | xargs sort -u | xargs modprobe -a 2> /dev/null
+
+for devfile in /sys/class/net/*; do
+	if [ $(echo $devfile | grep -E '^\/.+\/(eth|wlan)[0-9]+$') ]; then
+		if [ "$(cat $devfile/operstate)" = "down" ]; then
+			echo "Spoofing MAC address for: ${devfile##*/}"
+			/usr/bin/macchanger --bia --another ${devfile##*/}
+		fi
+	fi
+done
