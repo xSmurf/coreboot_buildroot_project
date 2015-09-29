@@ -42,5 +42,7 @@ error_exit $?
 error_exit $?
 
 # Add symlink to gpg2 for convenience
-echo "Symlinking gpg2 ..."
-ln -s /usr/bin/gpg2 $TARGET_DIR/usr/bin/gpg
+if [ ! -e "$TARGET_DIR/usr/bin/gpg" ]; then
+	echo "Symlinking gpg2 ..."
+	ln -s /usr/bin/gpg2 $TARGET_DIR/usr/bin/gpg
+fi

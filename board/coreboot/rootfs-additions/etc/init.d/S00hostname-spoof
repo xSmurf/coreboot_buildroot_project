@@ -1,7 +1,7 @@
 #!/bin/sh
 
 do_start() {
-	FILE=/usr/share/dict/hostname-list
+	#FILE=/usr/share/dict/hostname-list
 
 	if [ -f "/etc/hostname" ]; then
 		OLDHOST="$(cat /etc/hostname)"
@@ -22,7 +22,8 @@ do_start() {
 	#  we aren't doing this, but it could be useful in the future.
 	NOTFOUND=0
 	until [ "${NOTFOUND}" -gt "0" ]; do
-		WORD=$(/usr/bin/shuf -n1 "$FILE")
+		#WORD=$(/usr/bin/shuf -n1 "$FILE")
+		WORD=$(/usr/bin/openssl rand -hex 8)
 
 		/bin/fgrep -r $WORD /etc/ 2>&1 >> /dev/null
 		NOTFOUND=$?
