@@ -28,11 +28,15 @@ if [ -e $TARGET_DIR/etc/init.d/S50dropbear ]; then
 fi
 
 # Enable virtual terminals in inittab
-echo "Enabling virtual terminal 2..12 ..."
-for ii in {12..2}; do
-	sed -E -i 's/GENERIC_SERIAL/GENERIC_SERIAL\ntty'$ii'::askfirst:-\/bin\/login/' "$TARGET_DIR/etc/inittab"
-	error_exit $?
-done
+if [ ! $(fgrep tty12 "$TARGET_DIR/etc/inittab") ]; then
+	echo "Enabling virtual terminal 2..12 ..."
+	for ii in {12..2}; do
+		sed -E -i 's/GENERIC_SERIAL/GENERIC_SERIAL\ntty'$ii'::askfirst:-\/bin\/login/' "$TARGET_DIR/etc/inittab"
+		error_exit $?
+	done
+else
+	echo "Virtual terminals already enabled."
+fi
 
 # Set pax flax (tentative)
 echo "Setting paxflag on libcrypto ..."
