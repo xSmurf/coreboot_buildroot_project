@@ -20,17 +20,21 @@ do_start() {
 	# Make sure that our selected hostname doesn't appear anywhere in /etc,
 	#  this way it should be safe to sed the whole directory
 	#  we aren't doing this, but it could be useful in the future.
-#	NOTFOUND=0
-#	until [ "${NOTFOUND}" -gt "0" ]; do
-#		#WORD=$(/usr/bin/shuf -n1 "$FILE")
-#		WORD=$(/usr/bin/openssl rand -hex 8)
-#
-#		/bin/fgrep -r $WORD /etc/ 2>&1 >> /dev/null
-#		NOTFOUND=$?
-#	done
-	WORD=$(/usr/bin/openssl rand -hex 8)
+	NOTFOUND=0
+	until [ "${NOTFOUND}" -gt "0" ]; do
+		#WORD=$(/usr/bin/shuf -n1 "$FILE")
+		WORD=$(/usr/bin/openssl rand -hex 8)
+		ES=$?
+		if [ $ES -gt 0 ]; then
+			echo "Error getting random hostname!"
+			exit $ES
+		fi
 
-	echo "Setting hostname to '$HOSTNAME'"
+		/bin/fgrep -r $WORD /etc/ 2>&1 >> /dev/null
+		NOTFOUND=$?
+	done
+
+	echo "Setting hostname to '$WORD'"
 
 	/bin/hostname $WORD
 
@@ -39,7 +43,7 @@ do_start() {
 	echo "$WORD" > /etc/hostname
 	echo "$OLDHOST" > /etc/hostname.old
 
-	#/bin/sed -i "s/${OLDHOST}/${WORD}/g" /etc/hosts
+	/bin/sed -i "s/${OLDHOST}/${WORD}/g" /etc/hosts
 
 	exit $ES
 }
