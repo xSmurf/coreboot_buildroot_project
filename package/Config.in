@@ -5,6 +5,7 @@ endmenu
 
 menu "Coreboot"
 	source "$BR2_EXTERNAL/package/coreboot/cbfstool/Config.in"
+	source "$BR2_EXTERNAL/package/coreboot/cbmem/Config.in"
 	source "$BR2_EXTERNAL/package/coreboot/ifdtool/Config.in"
 	source "$BR2_EXTERNAL/package/coreboot/nvramtool/Config.in"
 endmenu
