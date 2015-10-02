@@ -30,7 +30,7 @@ do_start() {
 			exit $ES
 		fi
 
-		/bin/fgrep -r $WORD /etc/ 2>&1 >> /dev/null
+		/bin/fgrep -q -r $WORD /etc/ 2>&1 >> /dev/null
 		NOTFOUND=$?
 	done
 
