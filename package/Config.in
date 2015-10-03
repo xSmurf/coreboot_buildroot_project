@@ -1,6 +1,5 @@
 menu "Networking applications"
 	source "$BR2_EXTERNAL/package/connectproxy/Config.in"
-	source "$BR2_EXTERNAL/package/tlsdate/Config.in"
 endmenu
 
 menu "Coreboot"
