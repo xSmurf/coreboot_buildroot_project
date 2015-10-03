@@ -1,0 +1,6 @@
+config BR2_PACKAGE_INTELMETOOL
+	bool "intelmetool"
+	help
+	  intemetool: Tool to check the Intel ME configurations.
+	  
+	  https://github.com/zamaudio/intelmetool
