@@ -39,11 +39,13 @@ else
 fi
 
 # Set pax flax (tentative)
-echo "Setting paxflag on libcrypto ..."
-/sbin/paxctl -c $TARGET_DIR/usr/lib/libcrypto.so.1.0.0
-error_exit $?
-/sbin/paxctl -m $TARGET_DIR/usr/lib/libcrypto.so.1.0.0
-error_exit $?
+if [ -e "$TARGET_DIR/usr/lib/libcrypto.so.1.0.0" ]; then
+	echo "Setting paxflag on libcrypto ..."
+	/sbin/paxctl -c $TARGET_DIR/usr/lib/libcrypto.so.1.0.0
+	error_exit $?
+	/sbin/paxctl -m $TARGET_DIR/usr/lib/libcrypto.so.1.0.0
+	error_exit $?
+fi
 
 # Add symlink to gpg2 for convenience
 if [ ! -e "$TARGET_DIR/usr/bin/gpg" ]; then
