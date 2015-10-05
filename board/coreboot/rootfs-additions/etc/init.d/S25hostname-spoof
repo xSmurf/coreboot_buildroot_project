@@ -2,7 +2,6 @@
 
 do_start() {
 	#FILE=/usr/share/dict/hostname-list
-
 	if [ -f "/etc/hostname" ]; then
 		OLDHOST="$(cat /etc/hostname)"
 	else
@@ -23,7 +22,11 @@ do_start() {
 	NOTFOUND=0
 	until [ "${NOTFOUND}" -gt "0" ]; do
 		#WORD=$(/usr/bin/shuf -n1 "$FILE")
-		WORD=$(/usr/bin/openssl rand -hex 8)
+		if [ -e /usr/bin/openssl ]; then
+			WORD=$(/usr/bin/openssl rand -hex 8)
+		else
+			WORD=$(dd if=/dev/urandom bs=8 count1 2>>/dev/null | /usr/bin/hexdump -v -e '/1 "%02x"')
+		fi
 		ES=$?
 		if [ $ES -gt 0 ]; then
 			echo "Error getting random hostname!"
