@@ -24,8 +24,13 @@ do_start() {
 		#WORD=$(/usr/bin/shuf -n1 "$FILE")
 		if [ -e /usr/bin/openssl ]; then
 			WORD=$(/usr/bin/openssl rand -hex 8)
-		else
+		elif [ -e /usr/bin/hexdump ]; then
 			WORD=$(dd if=/dev/urandom bs=8 count1 2>>/dev/null | /usr/bin/hexdump -v -e '/1 "%02x"')
+		elif [ -e /usr/bin/od ]; then
+			WORD=$(dd if=/dev/urandom bs=8 count1 2>>/dev/null | /usr/bin/od -An -tx8 | tr -d ' ')
+		else
+			echo -e "\nERROR: Unable to set random hostname!\n"
+			exit 1
 		fi
 		ES=$?
 		if [ $ES -gt 0 ]; then
