@@ -4,6 +4,8 @@ This repostory contains [buildroot](http://buildroot.uclibc.org/) configurations
 
 It includes three different configuration: the default config `coreboot_defconfig`, a minimal config `coreboot_minimal_defconfig` which can fit on the X230 without hardware modifications (but lacks some extra goodies), and a grsec configuration for both of these.
 
+Some of the coreboot utility (ie: cbfstool, ifdtool, and nvramtool) packages are built from a local source. you will need to edit this path in `packages/coreboot/*/*.mk`
+
 $ git clone https://github.com/xsmurf/coreboot_buildroot_project.git
 $ export BR_PROJECT=$PWD/coreboot_buildroot_project
 $ wget <buildroot-release.tgz>
@@ -13,3 +15,4 @@ $ make BR2_EXTERNAL=$BR_PROJECT coreboot_defconfig
 $ make
 
 After making changes in buildroot with `make menuconfig`, `make linux-menuconfig`, or `make busybox-menuconfig`, you use the included `$BR_PROJECT/scripts/save.sh` to export your changes back to the project.
+
