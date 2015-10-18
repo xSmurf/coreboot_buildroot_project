@@ -1,0 +1,2237 @@
+diff -aruN a/drivers/firmware/coreboot/Kconfig b/drivers/firmware/coreboot/Kconfig
+--- a/drivers/firmware/coreboot/Kconfig	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/Kconfig	2015-09-30 21:47:47.745530051 +0000
+@@ -0,0 +1,31 @@
++config COREBOOT_FIRMWARE
++	bool "Coreboot Firmware Drivers"
++	depends on X86
++	default n
++	help
++	  These firmware drivers are used by coreboot based machines.
++	  They are only useful if you are working directly on a coreboot
++	  powered machine.  If in doubt, say "N".
++
++menu "Coreboot Firmware Drivers"
++	depends on COREBOOT_FIRMWARE
++
++config COREBOOT_SMI
++	tristate "SMI interface for Coreboot platforms"
++	depends on ACPI && DMI && EFI
++	select EFI_VARS
++	help
++	  Say Y here if you want to enable SMI callbacks for Google
++	  platforms.  This provides an interface for writing to and
++	  clearing the EFI event log and reading and writing NVRAM
++	  variables.
++
++config COREBOOT_MEMCONSOLE
++	tristate "Firmware Memory Console"
++	depends on DMI
++	help
++	  This option enables the kernel to search for a firmware log in
++	  the EBDA on coreboot machines.  If found, this log is exported to
++	  userland in the file /sys/firmware/log.
++
++endmenu
+diff -aruN a/drivers/firmware/coreboot/memconsole/coreboot_table.c b/drivers/firmware/coreboot/memconsole/coreboot_table.c
+--- a/drivers/firmware/coreboot/memconsole/coreboot_table.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/coreboot_table.c	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,145 @@
++/*
++ *  coreboot_table.c: module providing coreboot table access.
++ *
++ *  Copyright 2015 Google Inc.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License v2.0 as published by
++ *  the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++
++struct coreboot_table_header {
++	char signature[4];
++	u32 header_bytes;
++	u32 header_checksum;
++	u32 table_bytes;
++	u32 table_checksum;
++	u32 table_entries;
++};
++
++struct coreboot_table_entry {
++	u32 tag;
++	u32 size;
++};
++
++static struct coreboot_table_header __iomem *ptr_header =
++	(void*)(-EPROBE_DEFER);
++
++/*
++ * This function parses the coreboot table for an entry that contains the base
++ * address of the given entry tag. The coreboot table consists of a header
++ * directly followed by a number of small, variable-sized entries, which each
++ * contain an identifying tag and their length as the first two fields.
++ */
++int coreboot_table_find(int tag, void *data, size_t data_size)
++{
++	struct coreboot_table_header header;
++	struct coreboot_table_entry entry;
++	void *ptr_entry;
++	int i;
++
++	if (IS_ERR(ptr_header))
++		return PTR_ERR(ptr_header);
++
++	memcpy_fromio(&header, ptr_header, sizeof(header));
++
++	if (strncmp(header.signature, "LBIO", sizeof(header.signature))) {
++		pr_warn("coreboot_table: coreboot table missing or corrupt!\n");
++		return -ENODEV;
++	}
++
++	ptr_entry = (void *)ptr_header + header.header_bytes;
++
++	for (i = 0; i < header.table_entries; i++) {
++		memcpy_fromio(&entry, ptr_entry, sizeof(entry));
++		if (entry.tag == tag) {
++			if (data_size < entry.size)
++				return -EINVAL;
++			memcpy_fromio(data, ptr_entry, entry.size);
++			return 0;
++		}
++		ptr_entry += entry.size;
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL(coreboot_table_find);
++
++static int coreboot_table_of_probe(struct platform_device *pdev)
++{
++	int ret = 0;
++	struct device_node* fw_dn;
++
++	fw_dn = of_find_compatible_node(NULL, NULL, "coreboot");
++	if (!fw_dn) {
++		ret = -ENODEV;
++		goto fail;
++	}
++
++	ptr_header = of_iomap(fw_dn, 0);
++	of_node_put(fw_dn);
++
++	if (!ptr_header) {
++		ret = -ENOMEM;
++		goto fail;
++	}
++
++	return 0;
++fail:
++	ptr_header = ERR_PTR(ret);
++	return ret;
++}
++
++static int coreboot_table_of_remove(struct platform_device *pdev)
++{
++	if (!IS_ERR(ptr_header))
++		iounmap(ptr_header);
++	return 0;
++}
++
++static struct platform_driver coreboot_table_driver = {
++	.probe = coreboot_table_of_probe,
++	.remove = coreboot_table_of_remove,
++	.driver = {
++		.name = "coreboot_table",
++	},
++};
++
++static int __init platform_coreboot_table_init(void)
++{
++	struct platform_device* pdev;
++	int ret = 0;
++
++	pdev = platform_device_register_simple("coreboot_table", -1, NULL, 0);
++	if (pdev == NULL) {
++		ret = -ENODEV;
++		goto fail;
++	}
++
++	ret = platform_driver_register(&coreboot_table_driver);
++	if (ret)
++		goto fail;
++
++	return 0;
++fail:
++	ptr_header = ERR_PTR(ret);
++	return ret;
++}
++
++module_init(platform_coreboot_table_init);
++
++MODULE_AUTHOR("Google, Inc.");
++MODULE_LICENSE("GPL");
+diff -aruN a/drivers/firmware/coreboot/memconsole/coreboot_table.h b/drivers/firmware/coreboot/memconsole/coreboot_table.h
+--- a/drivers/firmware/coreboot/memconsole/coreboot_table.h	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/coreboot_table.h	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,32 @@
++/*
++ *  coreboot_table.c: Internal header for coreboot table access.
++ *
++ *  Copyright 2015 Google Inc.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License v2.0 as published by
++ *  the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef __COREBOOT_TABLE_H
++#define __COREBOOT_TABLE_H
++
++#include <linux/platform_device.h>
++
++/* List of coreboot entry structures that is used */
++struct lb_cbmem_ref {
++	uint32_t tag;
++	uint32_t size;
++
++	uint64_t cbmem_addr;
++};
++
++/* Retrieve coreboot table entry with tag *tag* and copy it to data */
++int coreboot_table_find(int tag, void *data, size_t data_size);
++
++#endif /* __COREBOOT_TABLE_H */
+diff -aruN a/drivers/firmware/coreboot/memconsole/gsmi.c b/drivers/firmware/coreboot/memconsole/gsmi.c
+--- a/drivers/firmware/coreboot/memconsole/gsmi.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/gsmi.c	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,971 @@
++/*
++ * Copyright 2010 Google Inc. All Rights Reserved.
++ * Author: dlaurie@google.com (Duncan Laurie)
++ *
++ * Re-worked to expose sysfs APIs by mikew@google.com (Mike Waychison)
++ *
++ * EFI SMI interface for Google platforms
++ */
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/types.h>
++#include <linux/device.h>
++#include <linux/platform_device.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/spinlock.h>
++#include <linux/dma-mapping.h>
++#include <linux/dmapool.h>
++#include <linux/fs.h>
++#include <linux/slab.h>
++#include <linux/ioctl.h>
++#include <linux/acpi.h>
++#include <linux/io.h>
++#include <linux/uaccess.h>
++#include <linux/dmi.h>
++#include <linux/kdebug.h>
++#include <linux/reboot.h>
++#include <linux/efi.h>
++#include <linux/module.h>
++#include <linux/ucs2_string.h>
++#include <linux/thermal.h>
++
++#define GSMI_SHUTDOWN_CLEAN	0	/* Clean Shutdown */
++/* TODO(mikew@google.com): Tie in HARDLOCKUP_DETECTOR with NMIWDT */
++#define GSMI_SHUTDOWN_NMIWDT	1	/* NMI Watchdog */
++#define GSMI_SHUTDOWN_PANIC	2	/* Panic */
++#define GSMI_SHUTDOWN_OOPS	3	/* Oops */
++#define GSMI_SHUTDOWN_DIE	4	/* Die -- No longer meaningful */
++#define GSMI_SHUTDOWN_MCE	5	/* Machine Check */
++#define GSMI_SHUTDOWN_SOFTWDT	6	/* Software Watchdog */
++#define GSMI_SHUTDOWN_MBE	7	/* Uncorrected ECC */
++#define GSMI_SHUTDOWN_TRIPLE	8	/* Triple Fault */
++#define GSMI_SHUTDOWN_THERMAL	9	/* Critical Thermal Threshold */
++
++#define DRIVER_VERSION		"1.0"
++#define GSMI_GUID_SIZE		16
++#define GSMI_BUF_SIZE		1024
++#define GSMI_BUF_ALIGN		sizeof(u64)
++#define GSMI_CALLBACK		0xef
++
++/* SMI return codes */
++#define GSMI_SUCCESS		0x00
++#define GSMI_UNSUPPORTED2	0x03
++#define GSMI_LOG_FULL		0x0b
++#define GSMI_VAR_NOT_FOUND	0x0e
++#define GSMI_HANDSHAKE_SPIN	0x7d
++#define GSMI_HANDSHAKE_CF	0x7e
++#define GSMI_HANDSHAKE_NONE	0x7f
++#define GSMI_INVALID_PARAMETER	0x82
++#define GSMI_UNSUPPORTED	0x83
++#define GSMI_BUFFER_TOO_SMALL	0x85
++#define GSMI_NOT_READY		0x86
++#define GSMI_DEVICE_ERROR	0x87
++#define GSMI_NOT_FOUND		0x8e
++
++#define QUIRKY_BOARD_HASH 0x78a30a50
++
++/* Internally used commands passed to the firmware */
++#define GSMI_CMD_GET_NVRAM_VAR		0x01
++#define GSMI_CMD_GET_NEXT_VAR		0x02
++#define GSMI_CMD_SET_NVRAM_VAR		0x03
++#define GSMI_CMD_SET_EVENT_LOG		0x08
++#define GSMI_CMD_CLEAR_EVENT_LOG	0x09
++#define GSMI_CMD_CLEAR_CONFIG		0x20
++#define GSMI_CMD_HANDSHAKE_TYPE		0xC1
++
++/* Magic entry type for kernel events */
++#define GSMI_LOG_ENTRY_TYPE_KERNEL     0xDEAD
++
++/* SMI buffers must be in 32bit physical address space */
++struct gsmi_buf {
++	u8 *start;			/* start of buffer */
++	size_t length;			/* length of buffer */
++	dma_addr_t handle;		/* dma allocation handle */
++	u32 address;			/* physical address of buffer */
++};
++
++struct gsmi_device {
++	struct platform_device *pdev;	/* platform device */
++	struct gsmi_buf *name_buf;	/* variable name buffer */
++	struct gsmi_buf *data_buf;	/* generic data buffer */
++	struct gsmi_buf *param_buf;	/* parameter buffer */
++	spinlock_t lock;		/* serialize access to SMIs */
++	u16 smi_cmd;			/* SMI command port */
++	int handshake_type;		/* firmware handler interlock type */
++	struct dma_pool *dma_pool;	/* DMA buffer pool */
++} gsmi_dev;
++
++/* Packed structures for communicating with the firmware */
++struct gsmi_nvram_var_param {
++	efi_guid_t	guid;
++	u32		name_ptr;
++	u32		attributes;
++	u32		data_len;
++	u32		data_ptr;
++} __packed;
++
++struct gsmi_get_next_var_param {
++	u8	guid[GSMI_GUID_SIZE];
++	u32	name_ptr;
++	u32	name_len;
++} __packed;
++
++struct gsmi_set_eventlog_param {
++	u32	data_ptr;
++	u32	data_len;
++	u32	type;
++} __packed;
++
++/* Event log formats */
++struct gsmi_log_entry_type_1 {
++	u16	type;
++	u32	instance;
++} __packed;
++
++
++/*
++ * Some platforms don't have explicit SMI handshake
++ * and need to wait for SMI to complete.
++ */
++#define GSMI_DEFAULT_SPINCOUNT	0x10000
++static unsigned int spincount = GSMI_DEFAULT_SPINCOUNT;
++module_param(spincount, uint, 0600);
++MODULE_PARM_DESC(spincount,
++	"The number of loop iterations to use when using the spin handshake.");
++
++static struct gsmi_buf *gsmi_buf_alloc(void)
++{
++	struct gsmi_buf *smibuf;
++
++	smibuf = kzalloc(sizeof(*smibuf), GFP_KERNEL);
++	if (!smibuf) {
++		printk(KERN_ERR "gsmi: out of memory\n");
++		return NULL;
++	}
++
++	/* allocate buffer in 32bit address space */
++	smibuf->start = dma_pool_alloc(gsmi_dev.dma_pool, GFP_KERNEL,
++				       &smibuf->handle);
++	if (!smibuf->start) {
++		printk(KERN_ERR "gsmi: failed to allocate name buffer\n");
++		kfree(smibuf);
++		return NULL;
++	}
++
++	/* fill in the buffer handle */
++	smibuf->length = GSMI_BUF_SIZE;
++	smibuf->address = (u32)virt_to_phys(smibuf->start);
++
++	return smibuf;
++}
++
++static void gsmi_buf_free(struct gsmi_buf *smibuf)
++{
++	if (smibuf) {
++		if (smibuf->start)
++			dma_pool_free(gsmi_dev.dma_pool, smibuf->start,
++				      smibuf->handle);
++		kfree(smibuf);
++	}
++}
++
++/*
++ * Make a call to gsmi func(sub).  GSMI error codes are translated to
++ * in-kernel errnos (0 on success, -ERRNO on error).
++ */
++static int gsmi_exec(u8 func, u8 sub)
++{
++	u16 cmd = (sub << 8) | func;
++	u16 result = 0;
++	int rc = 0;
++
++	/*
++	 * AH  : Subfunction number
++	 * AL  : Function number
++	 * EBX : Parameter block address
++	 * DX  : SMI command port
++	 *
++	 * Three protocols here. See also the comment in gsmi_init().
++	 */
++	if (gsmi_dev.handshake_type == GSMI_HANDSHAKE_CF) {
++		/*
++		 * If handshake_type == HANDSHAKE_CF then set CF on the
++		 * way in and wait for the handler to clear it; this avoids
++		 * corrupting register state on those chipsets which have
++		 * a delay between writing the SMI trigger register and
++		 * entering SMM.
++		 */
++		asm volatile (
++			"stc\n"
++			"outb %%al, %%dx\n"
++		"1:      jc 1b\n"
++			: "=a" (result)
++			: "0" (cmd),
++			  "d" (gsmi_dev.smi_cmd),
++			  "b" (gsmi_dev.param_buf->address)
++			: "memory", "cc"
++		);
++	} else if (gsmi_dev.handshake_type == GSMI_HANDSHAKE_SPIN) {
++		/*
++		 * If handshake_type == HANDSHAKE_SPIN we spin a
++		 * hundred-ish usecs to ensure the SMI has triggered.
++		 */
++		asm volatile (
++			"outb %%al, %%dx\n"
++		"1:      loop 1b\n"
++			: "=a" (result)
++			: "0" (cmd),
++			  "d" (gsmi_dev.smi_cmd),
++			  "b" (gsmi_dev.param_buf->address),
++			  "c" (spincount)
++			: "memory", "cc"
++		);
++	} else {
++		/*
++		 * If handshake_type == HANDSHAKE_NONE we do nothing;
++		 * either we don't need to or it's legacy firmware that
++		 * doesn't understand the CF protocol.
++		 */
++		asm volatile (
++			"outb %%al, %%dx\n\t"
++			: "=a" (result)
++			: "0" (cmd),
++			  "d" (gsmi_dev.smi_cmd),
++			  "b" (gsmi_dev.param_buf->address)
++			: "memory", "cc"
++		);
++	}
++
++	/* check return code from SMI handler */
++	switch (result) {
++	case GSMI_SUCCESS:
++		break;
++	case GSMI_VAR_NOT_FOUND:
++		/* not really an error, but let the caller know */
++		rc = 1;
++		break;
++	case GSMI_INVALID_PARAMETER:
++		printk(KERN_ERR "gsmi: exec 0x%04x: Invalid parameter\n", cmd);
++		rc = -EINVAL;
++		break;
++	case GSMI_BUFFER_TOO_SMALL:
++		printk(KERN_ERR "gsmi: exec 0x%04x: Buffer too small\n", cmd);
++		rc = -ENOMEM;
++		break;
++	case GSMI_UNSUPPORTED:
++	case GSMI_UNSUPPORTED2:
++		if (sub != GSMI_CMD_HANDSHAKE_TYPE)
++			printk(KERN_ERR "gsmi: exec 0x%04x: Not supported\n",
++			       cmd);
++		rc = -ENOSYS;
++		break;
++	case GSMI_NOT_READY:
++		printk(KERN_ERR "gsmi: exec 0x%04x: Not ready\n", cmd);
++		rc = -EBUSY;
++		break;
++	case GSMI_DEVICE_ERROR:
++		printk(KERN_ERR "gsmi: exec 0x%04x: Device error\n", cmd);
++		rc = -EFAULT;
++		break;
++	case GSMI_NOT_FOUND:
++		printk(KERN_ERR "gsmi: exec 0x%04x: Data not found\n", cmd);
++		rc = -ENOENT;
++		break;
++	case GSMI_LOG_FULL:
++		printk(KERN_ERR "gsmi: exec 0x%04x: Log full\n", cmd);
++		rc = -ENOSPC;
++		break;
++	case GSMI_HANDSHAKE_CF:
++	case GSMI_HANDSHAKE_SPIN:
++	case GSMI_HANDSHAKE_NONE:
++		rc = result;
++		break;
++	default:
++		printk(KERN_ERR "gsmi: exec 0x%04x: Unknown error 0x%04x\n",
++		       cmd, result);
++		rc = -ENXIO;
++	}
++
++	return rc;
++}
++
++#ifdef CONFIG_EFI_VARS
++
++static struct efivars efivars;
++
++static efi_status_t gsmi_get_variable(efi_char16_t *name,
++				      efi_guid_t *vendor, u32 *attr,
++				      unsigned long *data_size,
++				      void *data)
++{
++	struct gsmi_nvram_var_param param = {
++		.name_ptr = gsmi_dev.name_buf->address,
++		.data_ptr = gsmi_dev.data_buf->address,
++		.data_len = (u32)*data_size,
++	};
++	efi_status_t ret = EFI_SUCCESS;
++	unsigned long flags;
++	size_t name_len = ucs2_strnlen(name, GSMI_BUF_SIZE / 2);
++	int rc;
++
++	if (name_len >= GSMI_BUF_SIZE / 2)
++		return EFI_BAD_BUFFER_SIZE;
++
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++
++	/* Vendor guid */
++	memcpy(&param.guid, vendor, sizeof(param.guid));
++
++	/* variable name, already in UTF-16 */
++	memset(gsmi_dev.name_buf->start, 0, gsmi_dev.name_buf->length);
++	memcpy(gsmi_dev.name_buf->start, name, name_len * 2);
++
++	/* data pointer */
++	memset(gsmi_dev.data_buf->start, 0, gsmi_dev.data_buf->length);
++
++	/* parameter buffer */
++	memset(gsmi_dev.param_buf->start, 0, gsmi_dev.param_buf->length);
++	memcpy(gsmi_dev.param_buf->start, &param, sizeof(param));
++
++	rc = gsmi_exec(GSMI_CALLBACK, GSMI_CMD_GET_NVRAM_VAR);
++	if (rc < 0) {
++		printk(KERN_ERR "gsmi: Get Variable failed\n");
++		ret = EFI_LOAD_ERROR;
++	} else if (rc == 1) {
++		/* variable was not found */
++		ret = EFI_NOT_FOUND;
++	} else {
++		/* Get the arguments back */
++		memcpy(&param, gsmi_dev.param_buf->start, sizeof(param));
++
++		/* The size reported is the min of all of our buffers */
++		*data_size = min_t(unsigned long, *data_size,
++						gsmi_dev.data_buf->length);
++		*data_size = min_t(unsigned long, *data_size, param.data_len);
++
++		/* Copy data back to return buffer. */
++		memcpy(data, gsmi_dev.data_buf->start, *data_size);
++
++		/* All variables are have the following attributes */
++		*attr = EFI_VARIABLE_NON_VOLATILE |
++			EFI_VARIABLE_BOOTSERVICE_ACCESS |
++			EFI_VARIABLE_RUNTIME_ACCESS;
++	}
++
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	return ret;
++}
++
++static efi_status_t gsmi_get_next_variable(unsigned long *name_size,
++					   efi_char16_t *name,
++					   efi_guid_t *vendor)
++{
++	struct gsmi_get_next_var_param param = {
++		.name_ptr = gsmi_dev.name_buf->address,
++		.name_len = gsmi_dev.name_buf->length,
++	};
++	efi_status_t ret = EFI_SUCCESS;
++	int rc;
++	unsigned long flags;
++
++	/* For the moment, only support buffers that exactly match in size */
++	if (*name_size != GSMI_BUF_SIZE)
++		return EFI_BAD_BUFFER_SIZE;
++
++	/* Let's make sure the thing is at least null-terminated */
++	if (ucs2_strnlen(name, GSMI_BUF_SIZE / 2) == GSMI_BUF_SIZE / 2)
++		return EFI_INVALID_PARAMETER;
++
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++
++	/* guid */
++	memcpy(&param.guid, vendor, sizeof(param.guid));
++
++	/* variable name, already in UTF-16 */
++	memcpy(gsmi_dev.name_buf->start, name, *name_size);
++
++	/* parameter buffer */
++	memset(gsmi_dev.param_buf->start, 0, gsmi_dev.param_buf->length);
++	memcpy(gsmi_dev.param_buf->start, &param, sizeof(param));
++
++	rc = gsmi_exec(GSMI_CALLBACK, GSMI_CMD_GET_NEXT_VAR);
++	if (rc < 0) {
++		printk(KERN_ERR "gsmi: Get Next Variable Name failed\n");
++		ret = EFI_LOAD_ERROR;
++	} else if (rc == 1) {
++		/* variable not found -- end of list */
++		ret = EFI_NOT_FOUND;
++	} else {
++		/* copy variable data back to return buffer */
++		memcpy(&param, gsmi_dev.param_buf->start, sizeof(param));
++
++		/* Copy the name back */
++		memcpy(name, gsmi_dev.name_buf->start, GSMI_BUF_SIZE);
++		*name_size = ucs2_strnlen(name, GSMI_BUF_SIZE / 2) * 2;
++
++		/* copy guid to return buffer */
++		memcpy(vendor, &param.guid, sizeof(param.guid));
++		ret = EFI_SUCCESS;
++	}
++
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	return ret;
++}
++
++static efi_status_t gsmi_set_variable(efi_char16_t *name,
++				      efi_guid_t *vendor,
++				      u32 attr,
++				      unsigned long data_size,
++				      void *data)
++{
++	struct gsmi_nvram_var_param param = {
++		.name_ptr = gsmi_dev.name_buf->address,
++		.data_ptr = gsmi_dev.data_buf->address,
++		.data_len = (u32)data_size,
++		.attributes = EFI_VARIABLE_NON_VOLATILE |
++			      EFI_VARIABLE_BOOTSERVICE_ACCESS |
++			      EFI_VARIABLE_RUNTIME_ACCESS,
++	};
++	size_t name_len = ucs2_strnlen(name, GSMI_BUF_SIZE / 2);
++	efi_status_t ret = EFI_SUCCESS;
++	int rc;
++	unsigned long flags;
++
++	if (name_len >= GSMI_BUF_SIZE / 2)
++		return EFI_BAD_BUFFER_SIZE;
++
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++
++	/* guid */
++	memcpy(&param.guid, vendor, sizeof(param.guid));
++
++	/* variable name, already in UTF-16 */
++	memset(gsmi_dev.name_buf->start, 0, gsmi_dev.name_buf->length);
++	memcpy(gsmi_dev.name_buf->start, name, name_len * 2);
++
++	/* data pointer */
++	memset(gsmi_dev.data_buf->start, 0, gsmi_dev.data_buf->length);
++	memcpy(gsmi_dev.data_buf->start, data, data_size);
++
++	/* parameter buffer */
++	memset(gsmi_dev.param_buf->start, 0, gsmi_dev.param_buf->length);
++	memcpy(gsmi_dev.param_buf->start, &param, sizeof(param));
++
++	rc = gsmi_exec(GSMI_CALLBACK, GSMI_CMD_SET_NVRAM_VAR);
++	if (rc < 0) {
++		printk(KERN_ERR "gsmi: Set Variable failed\n");
++		ret = EFI_INVALID_PARAMETER;
++	}
++
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	return ret;
++}
++
++static const struct efivar_operations efivar_ops = {
++	.get_variable = gsmi_get_variable,
++	.set_variable = gsmi_set_variable,
++	.get_next_variable = gsmi_get_next_variable,
++};
++
++#endif /* CONFIG_EFI_VARS */
++
++static ssize_t eventlog_write(struct file *filp, struct kobject *kobj,
++			       struct bin_attribute *bin_attr,
++			       char *buf, loff_t pos, size_t count)
++{
++	struct gsmi_set_eventlog_param param = {
++		.data_ptr = gsmi_dev.data_buf->address,
++	};
++	int rc = 0;
++	unsigned long flags;
++
++	/* Pull the type out */
++	if (count < sizeof(u32))
++		return -EINVAL;
++	param.type = *(u32 *)buf;
++	buf += sizeof(u32);
++
++	/* The remaining buffer is the data payload */
++	if ((count - sizeof(u32)) > gsmi_dev.data_buf->length)
++		return -EINVAL;
++	param.data_len = count - sizeof(u32);
++
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++
++	/* data pointer */
++	memset(gsmi_dev.data_buf->start, 0, gsmi_dev.data_buf->length);
++	memcpy(gsmi_dev.data_buf->start, buf, param.data_len);
++
++	/* parameter buffer */
++	memset(gsmi_dev.param_buf->start, 0, gsmi_dev.param_buf->length);
++	memcpy(gsmi_dev.param_buf->start, &param, sizeof(param));
++
++	rc = gsmi_exec(GSMI_CALLBACK, GSMI_CMD_SET_EVENT_LOG);
++	if (rc < 0)
++		printk(KERN_ERR "gsmi: Set Event Log failed\n");
++
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	return (rc == 0) ? count : rc;
++
++}
++
++static struct bin_attribute eventlog_bin_attr = {
++	.attr = {.name = "append_to_eventlog", .mode = 0200},
++	.write = eventlog_write,
++};
++
++static ssize_t gsmi_clear_eventlog_store(struct kobject *kobj,
++					 struct kobj_attribute *attr,
++					 const char *buf, size_t count)
++{
++	int rc;
++	unsigned long flags;
++	unsigned long val;
++	struct {
++		u32 percentage;
++		u32 data_type;
++	} param;
++
++	rc = kstrtoul(buf, 0, &val);
++	if (rc)
++		return rc;
++
++	/*
++	 * Value entered is a percentage, 0 through 100, anything else
++	 * is invalid.
++	 */
++	if (val > 100)
++		return -EINVAL;
++
++	/* data_type here selects the smbios event log. */
++	param.percentage = val;
++	param.data_type = 0;
++
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++
++	/* parameter buffer */
++	memset(gsmi_dev.param_buf->start, 0, gsmi_dev.param_buf->length);
++	memcpy(gsmi_dev.param_buf->start, &param, sizeof(param));
++
++	rc = gsmi_exec(GSMI_CALLBACK, GSMI_CMD_CLEAR_EVENT_LOG);
++
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	if (rc)
++		return rc;
++	return count;
++}
++
++static struct kobj_attribute gsmi_clear_eventlog_attr = {
++	.attr = {.name = "clear_eventlog", .mode = 0200},
++	.store = gsmi_clear_eventlog_store,
++};
++
++static ssize_t gsmi_clear_config_store(struct kobject *kobj,
++				       struct kobj_attribute *attr,
++				       const char *buf, size_t count)
++{
++	int rc;
++	unsigned long flags;
++
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++
++	/* clear parameter buffer */
++	memset(gsmi_dev.param_buf->start, 0, gsmi_dev.param_buf->length);
++
++	rc = gsmi_exec(GSMI_CALLBACK, GSMI_CMD_CLEAR_CONFIG);
++
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	if (rc)
++		return rc;
++	return count;
++}
++
++static struct kobj_attribute gsmi_clear_config_attr = {
++	.attr = {.name = "clear_config", .mode = 0200},
++	.store = gsmi_clear_config_store,
++};
++
++static const struct attribute *gsmi_attrs[] = {
++	&gsmi_clear_config_attr.attr,
++	&gsmi_clear_eventlog_attr.attr,
++	NULL,
++};
++
++static int gsmi_shutdown_reason(int reason)
++{
++	struct gsmi_log_entry_type_1 entry = {
++		.type     = GSMI_LOG_ENTRY_TYPE_KERNEL,
++		.instance = reason,
++	};
++	struct gsmi_set_eventlog_param param = {
++		.data_len = sizeof(entry),
++		.type     = 1,
++	};
++	static int saved_reason;
++	int rc = 0;
++	unsigned long flags;
++
++	/* avoid duplicate entries in the log */
++	if (saved_reason & (1 << reason))
++		return 0;
++
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++
++	saved_reason |= (1 << reason);
++
++	/* data pointer */
++	memset(gsmi_dev.data_buf->start, 0, gsmi_dev.data_buf->length);
++	memcpy(gsmi_dev.data_buf->start, &entry, sizeof(entry));
++
++	/* parameter buffer */
++	param.data_ptr = gsmi_dev.data_buf->address;
++	memset(gsmi_dev.param_buf->start, 0, gsmi_dev.param_buf->length);
++	memcpy(gsmi_dev.param_buf->start, &param, sizeof(param));
++
++	rc = gsmi_exec(GSMI_CALLBACK, GSMI_CMD_SET_EVENT_LOG);
++
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	if (rc < 0)
++		printk(KERN_ERR "gsmi: Log Shutdown Reason failed\n");
++	else
++		printk(KERN_EMERG "gsmi: Log Shutdown Reason 0x%02x\n",
++		       reason);
++
++	return rc;
++}
++
++static int gsmi_reboot_callback(struct notifier_block *nb,
++				unsigned long reason, void *arg)
++{
++	gsmi_shutdown_reason(GSMI_SHUTDOWN_CLEAN);
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block gsmi_reboot_notifier = {
++	.notifier_call = gsmi_reboot_callback
++};
++
++static int gsmi_die_callback(struct notifier_block *nb,
++			     unsigned long reason, void *arg)
++{
++	if (reason == DIE_OOPS)
++		gsmi_shutdown_reason(GSMI_SHUTDOWN_OOPS);
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block gsmi_die_notifier = {
++	.notifier_call = gsmi_die_callback
++};
++
++static int gsmi_panic_callback(struct notifier_block *nb,
++			       unsigned long reason, void *arg)
++{
++	gsmi_shutdown_reason(GSMI_SHUTDOWN_PANIC);
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block gsmi_panic_notifier = {
++	.notifier_call = gsmi_panic_callback,
++};
++
++static int gsmi_thermal_callback(struct notifier_block *nb,
++				 unsigned long reason, void *arg)
++{
++	if (reason == THERMAL_TRIP_CRITICAL)
++		gsmi_shutdown_reason(GSMI_SHUTDOWN_THERMAL);
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block gsmi_thermal_notifier = {
++	.notifier_call = gsmi_thermal_callback
++};
++
++/*
++ * This hash function was blatantly copied from include/linux/hash.h.
++ * It is used by this driver to obfuscate a board name that requires a
++ * quirk within this driver.
++ *
++ * Please do not remove this copy of the function as any changes to the
++ * global utility hash_64() function would break this driver's ability
++ * to identify a board and provide the appropriate quirk -- mikew@google.com
++ */
++static u64 __init local_hash_64(u64 val, unsigned bits)
++{
++	u64 hash = val;
++
++	/*  Sigh, gcc can't optimise this alone like it does for 32 bits. */
++	u64 n = hash;
++	n <<= 18;
++	hash -= n;
++	n <<= 33;
++	hash -= n;
++	n <<= 3;
++	hash += n;
++	n <<= 3;
++	hash -= n;
++	n <<= 4;
++	hash += n;
++	n <<= 2;
++	hash += n;
++
++	/* High bits are more random, so use them. */
++	return hash >> (64 - bits);
++}
++
++static u32 __init hash_oem_table_id(char s[8])
++{
++	u64 input;
++	memcpy(&input, s, 8);
++	return local_hash_64(input, 32);
++}
++
++static struct dmi_system_id gsmi_dmi_table[] __initdata = {
++	{
++		.ident = "ThinkPad X220",
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "LENOVO"),
++		},
++	},
++	{
++		.ident = "Coreboot Firmware",
++		.matches = {
++			DMI_MATCH(DMI_BIOS_VENDOR, "coreboot"),
++		},
++	},
++	{}
++};
++MODULE_DEVICE_TABLE(dmi, gsmi_dmi_table);
++
++static __init int gsmi_system_valid(void)
++{
++	u32 hash;
++
++	if (!dmi_check_system(gsmi_dmi_table))
++		return -ENODEV;
++
++	/*
++	 * Only newer firmware supports the gsmi interface.  All older
++	 * firmware that didn't support this interface used to plug the
++	 * table name in the first four bytes of the oem_table_id field.
++	 * Newer firmware doesn't do that though, so use that as the
++	 * discriminant factor.  We have to do this in order to
++	 * whitewash our board names out of the public driver.
++	 */
++	if (!strncmp(acpi_gbl_FADT.header.oem_table_id, "FACP", 4)) {
++		printk(KERN_INFO "gsmi: Board is too old\n");
++		return -ENODEV;
++	}
++
++	/* Disable on board with 1.0 BIOS due to Google bug 2602657 */
++	hash = hash_oem_table_id(acpi_gbl_FADT.header.oem_table_id);
++	if (hash == QUIRKY_BOARD_HASH) {
++		const char *bios_ver = dmi_get_system_info(DMI_BIOS_VERSION);
++		if (strncmp(bios_ver, "1.0", 3) == 0) {
++			pr_info("gsmi: disabled on this board's BIOS %s\n",
++				bios_ver);
++			return -ENODEV;
++		}
++	}
++
++	/* check for valid SMI command port in ACPI FADT */
++	if (acpi_gbl_FADT.smi_command == 0) {
++		pr_info("gsmi: missing smi_command\n");
++		return -ENODEV;
++	}
++
++	/* Found */
++	return 0;
++}
++
++static struct kobject *gsmi_kobj;
++
++static const struct platform_device_info gsmi_dev_info = {
++	.name		= "gsmi",
++	.id		= -1,
++	/* SMI callbacks require 32bit addresses */
++	.dma_mask	= DMA_BIT_MASK(32),
++};
++
++static __init int gsmi_init(void)
++{
++	unsigned long flags;
++	int ret;
++
++	ret = gsmi_system_valid();
++	if (ret)
++		return ret;
++
++	gsmi_dev.smi_cmd = acpi_gbl_FADT.smi_command;
++
++	/* register device */
++	gsmi_dev.pdev = platform_device_register_full(&gsmi_dev_info);
++	if (IS_ERR(gsmi_dev.pdev)) {
++		printk(KERN_ERR "gsmi: unable to register platform device\n");
++		return PTR_ERR(gsmi_dev.pdev);
++	}
++
++	/* SMI access needs to be serialized */
++	spin_lock_init(&gsmi_dev.lock);
++
++	ret = -ENOMEM;
++	gsmi_dev.dma_pool = dma_pool_create("gsmi", &gsmi_dev.pdev->dev,
++					     GSMI_BUF_SIZE, GSMI_BUF_ALIGN, 0);
++	if (!gsmi_dev.dma_pool)
++		goto out_err;
++
++	/*
++	 * pre-allocate buffers because sometimes we are called when
++	 * this is not feasible: oops, panic, die, mce, etc
++	 */
++	gsmi_dev.name_buf = gsmi_buf_alloc();
++	if (!gsmi_dev.name_buf) {
++		printk(KERN_ERR "gsmi: failed to allocate name buffer\n");
++		goto out_err;
++	}
++
++	gsmi_dev.data_buf = gsmi_buf_alloc();
++	if (!gsmi_dev.data_buf) {
++		printk(KERN_ERR "gsmi: failed to allocate data buffer\n");
++		goto out_err;
++	}
++
++	gsmi_dev.param_buf = gsmi_buf_alloc();
++	if (!gsmi_dev.param_buf) {
++		printk(KERN_ERR "gsmi: failed to allocate param buffer\n");
++		goto out_err;
++	}
++
++	/*
++	 * Determine type of handshake used to serialize the SMI
++	 * entry. See also gsmi_exec().
++	 *
++	 * There's a "behavior" present on some chipsets where writing the
++	 * SMI trigger register in the southbridge doesn't result in an
++	 * immediate SMI. Rather, the processor can execute "a few" more
++	 * instructions before the SMI takes effect. To ensure synchronous
++	 * behavior, implement a handshake between the kernel driver and the
++	 * firmware handler to spin until released. This ioctl determines
++	 * the type of handshake.
++	 *
++	 * NONE: The firmware handler does not implement any
++	 * handshake. Either it doesn't need to, or it's legacy firmware
++	 * that doesn't know it needs to and never will.
++	 *
++	 * CF: The firmware handler will clear the CF in the saved
++	 * state before returning. The driver may set the CF and test for
++	 * it to clear before proceeding.
++	 *
++	 * SPIN: The firmware handler does not implement any handshake
++	 * but the driver should spin for a hundred or so microseconds
++	 * to ensure the SMI has triggered.
++	 *
++	 * Finally, the handler will return -ENOSYS if
++	 * GSMI_CMD_HANDSHAKE_TYPE is unimplemented, which implies
++	 * HANDSHAKE_NONE.
++	 */
++	spin_lock_irqsave(&gsmi_dev.lock, flags);
++	gsmi_dev.handshake_type = GSMI_HANDSHAKE_SPIN;
++	gsmi_dev.handshake_type =
++	    gsmi_exec(GSMI_CALLBACK, GSMI_CMD_HANDSHAKE_TYPE);
++	if (gsmi_dev.handshake_type == -ENOSYS)
++		gsmi_dev.handshake_type = GSMI_HANDSHAKE_NONE;
++	spin_unlock_irqrestore(&gsmi_dev.lock, flags);
++
++	/* Remove and clean up gsmi if the handshake could not complete. */
++	if (gsmi_dev.handshake_type == -ENXIO) {
++		printk(KERN_INFO "gsmi version " DRIVER_VERSION
++		       " failed to load\n");
++		ret = -ENODEV;
++		goto out_err;
++	}
++
++	/* Register in the firmware directory */
++	ret = -ENOMEM;
++	gsmi_kobj = kobject_create_and_add("gsmi", firmware_kobj);
++	if (!gsmi_kobj) {
++		printk(KERN_INFO "gsmi: Failed to create firmware kobj\n");
++		goto out_err;
++	}
++
++	/* Setup eventlog access */
++	ret = sysfs_create_bin_file(gsmi_kobj, &eventlog_bin_attr);
++	if (ret) {
++		printk(KERN_INFO "gsmi: Failed to setup eventlog");
++		goto out_err;
++	}
++
++	/* Other attributes */
++	ret = sysfs_create_files(gsmi_kobj, gsmi_attrs);
++	if (ret) {
++		printk(KERN_INFO "gsmi: Failed to add attrs");
++		goto out_remove_bin_file;
++	}
++
++#ifdef CONFIG_EFI_VARS
++	ret = efivars_register(&efivars, &efivar_ops, gsmi_kobj);
++	if (ret) {
++		printk(KERN_INFO "gsmi: Failed to register efivars\n");
++		sysfs_remove_files(gsmi_kobj, gsmi_attrs);
++		goto out_remove_bin_file;
++	}
++#endif
++
++	register_thermal_notifier(&gsmi_thermal_notifier);
++	register_reboot_notifier(&gsmi_reboot_notifier);
++	register_die_notifier(&gsmi_die_notifier);
++	atomic_notifier_chain_register(&panic_notifier_list,
++				       &gsmi_panic_notifier);
++
++	printk(KERN_INFO "gsmi version " DRIVER_VERSION " loaded\n");
++
++	return 0;
++
++out_remove_bin_file:
++	sysfs_remove_bin_file(gsmi_kobj, &eventlog_bin_attr);
++out_err:
++	kobject_put(gsmi_kobj);
++	gsmi_buf_free(gsmi_dev.param_buf);
++	gsmi_buf_free(gsmi_dev.data_buf);
++	gsmi_buf_free(gsmi_dev.name_buf);
++	if (gsmi_dev.dma_pool)
++		dma_pool_destroy(gsmi_dev.dma_pool);
++	platform_device_unregister(gsmi_dev.pdev);
++	pr_info("gsmi: failed to load: %d\n", ret);
++	return ret;
++}
++
++static void __exit gsmi_exit(void)
++{
++	unregister_thermal_notifier(&gsmi_thermal_notifier);
++	unregister_reboot_notifier(&gsmi_reboot_notifier);
++	unregister_die_notifier(&gsmi_die_notifier);
++	atomic_notifier_chain_unregister(&panic_notifier_list,
++					 &gsmi_panic_notifier);
++#ifdef CONFIG_EFI_VARS
++	efivars_unregister(&efivars);
++#endif
++
++	sysfs_remove_files(gsmi_kobj, gsmi_attrs);
++	sysfs_remove_bin_file(gsmi_kobj, &eventlog_bin_attr);
++	kobject_put(gsmi_kobj);
++	gsmi_buf_free(gsmi_dev.param_buf);
++	gsmi_buf_free(gsmi_dev.data_buf);
++	gsmi_buf_free(gsmi_dev.name_buf);
++	dma_pool_destroy(gsmi_dev.dma_pool);
++	platform_device_unregister(gsmi_dev.pdev);
++}
++
++module_init(gsmi_init);
++module_exit(gsmi_exit);
++
++MODULE_AUTHOR("Google, Inc.");
++MODULE_LICENSE("GPL");
+diff -aruN a/drivers/firmware/coreboot/memconsole/Kconfig b/drivers/firmware/coreboot/memconsole/Kconfig
+--- a/drivers/firmware/coreboot/memconsole/Kconfig	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/Kconfig	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,41 @@
++config COREBOOT_SMI
++	tristate "SMI interface for Coreboot platforms"
++	depends on X86 && ACPI && DMI
++	help
++	  Say Y here if you want to enable SMI callbacks for Google
++	  platforms.  This provides an interface for writing to and
++	  clearing the event log.  If EFI_VARS is also enabled this
++	  driver provides an interface for reading and writing NVRAM
++	  variables.
++
++config COREBOOT_COREBOOT_TABLE
++	tristate "Coreboot Table Access"
++	depends on OF
++	help
++	  This option enable the coreboot_table module, which provide other
++	  firmware modules to access coreboot table.
++
++config COREBOOT_MEMCONSOLE_X86
++	tristate "Firmware Memory Console - X86"
++	depends on X86 && ACPI && DMI
++	help
++	  This option enables the kernel to search for a firmware log in
++	  the EBDA / ACPI on Google servers on x86.  If found, this log is
++	  exported to userland in the file /sys/firmware/log.
++
++config COREBOOT_MEMCONSOLE_OF
++	tristate "Firmware Memory Console - OF"
++	depends on COREBOOT_COREBOOT_TABLE
++	help
++	  This option enables the kernel to search for a firmware log on
++	  coreboot platforms using device tree.  If found, this log is exported
++	  to userland in the file /sys/firmware/log.
++
++config COREBOOT_VPD
++	tristate "Vital Product Data"
++	depends on COREBOOT_COREBOOT_TABLE
++	help
++	  This option enables the kernel to expose the content of Google VPD
++	  under /sys/firmware/vpd.
++
++endmenu
+diff -aruN a/drivers/firmware/coreboot/memconsole/Makefile b/drivers/firmware/coreboot/memconsole/Makefile
+--- a/drivers/firmware/coreboot/memconsole/Makefile	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/Makefile	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,9 @@
++memc-of-y := memconsole-of.o memconsole.o
++memc-x86-y := memconsole-x86.o memconsole.o
++vpd-sysfs-y := vpd.o vpd_decode.o
++
++obj-$(CONFIG_COREBOOT_SMI)		+= gsmi.o
++obj-$(CONFIG_COREBOOT_COREBOOT_TABLE)	+= coreboot_table.o
++obj-$(CONFIG_COREBOOT_MEMCONSOLE_OF)	+= memc-of.o
++obj-$(CONFIG_COREBOOT_MEMCONSOLE_X86)	+= memc-x86.o
++obj-$(CONFIG_COREBOOT_VPD)		+= vpd-sysfs.o
+diff -aruN a/drivers/firmware/coreboot/memconsole/memconsole.c b/drivers/firmware/coreboot/memconsole/memconsole.c
+--- a/drivers/firmware/coreboot/memconsole/memconsole.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/memconsole.c	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,83 @@
++/*
++ * memconsole.c
++ *
++ * Architecture-independent parts of the memory based BIOS console.
++ *
++ * Copyright 2014 Google Inc.
++ */
++
++#include <linux/init.h>
++#include <linux/sysfs.h>
++#include <linux/kobject.h>
++
++#include "memconsole.h"
++
++static char *memconsole_baseaddr;
++static size_t memconsole_length;
++
++static ssize_t memconsole_read(struct file *filp, struct kobject *kobp,
++			       struct bin_attribute *bin_attr, char *buf,
++			       loff_t pos, size_t count)
++{
++	return memory_read_from_buffer(buf, count, &pos, memconsole_baseaddr,
++				       memconsole_length);
++}
++
++static struct bin_attribute memconsole_bin_attr = {
++	.attr = {.name = "log", .mode = 0444},
++	.read = memconsole_read,
++};
++
++/* CBMEM firmware console log descriptor. */
++struct cbmem_cons {
++	u32 buffer_size;
++	u32 buffer_cursor;
++	u8  buffer_body[0];
++} __packed;
++
++static struct cbmem_cons __iomem *cbmem_console;
++
++void memconsole_setup(void *baseaddr, size_t length)
++{
++	memconsole_baseaddr = baseaddr;
++	memconsole_length = length;
++}
++EXPORT_SYMBOL(memconsole_setup);
++
++int memconsole_coreboot_init(phys_addr_t physaddr)
++{
++	struct cbmem_cons __iomem *tmp_cbmc;
++
++	tmp_cbmc = ioremap_cache(physaddr, sizeof(*tmp_cbmc));
++
++	if (tmp_cbmc == NULL)
++		return -ENOMEM;
++
++	cbmem_console = ioremap_cache(physaddr, tmp_cbmc->buffer_size +
++		sizeof(*cbmem_console)); /* Don't forget counting the header. */
++
++	iounmap(tmp_cbmc);
++
++	if (cbmem_console == NULL)
++		return -ENOMEM;
++
++	memconsole_setup(cbmem_console->buffer_body,
++		min(cbmem_console->buffer_cursor, cbmem_console->buffer_size));
++	return 0;
++}
++EXPORT_SYMBOL(memconsole_coreboot_init);
++
++int memconsole_sysfs_init(void)
++{
++	memconsole_bin_attr.size = memconsole_length;
++	return sysfs_create_bin_file(firmware_kobj, &memconsole_bin_attr);
++}
++EXPORT_SYMBOL(memconsole_sysfs_init);
++
++void memconsole_exit(void)
++{
++	if (cbmem_console)
++		iounmap(cbmem_console);
++	sysfs_remove_bin_file(firmware_kobj, &memconsole_bin_attr);
++}
++EXPORT_SYMBOL(memconsole_exit);
+diff -aruN a/drivers/firmware/coreboot/memconsole/memconsole.h b/drivers/firmware/coreboot/memconsole/memconsole.h
+--- a/drivers/firmware/coreboot/memconsole/memconsole.h	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/memconsole.h	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,27 @@
++/*
++ * memconsole.h
++ *
++ * Internal headers of the memory based BIOS console.
++ *
++ * Copyright 2014 Google Inc.
++ */
++
++#ifndef __FIRMWARE_GOOGLE_MEMCONSOLE_H
++#define __FIRMWARE_GOOGLE_MEMCONSOLE_H
++
++#include <linux/io.h>
++#include <linux/types.h>
++
++/* Initialize the memory console given physical address of console buffer */
++int memconsole_coreboot_init(phys_addr_t physaddr);
++
++/* Initialize the memory console from raw (virtual) base address and length. */
++void memconsole_setup(void *baseaddr, size_t length);
++
++/* Update memory console length and create binary file for firmware object */
++int memconsole_sysfs_init(void);
++
++/* Unmap console buffer */
++void memconsole_exit(void);
++
++#endif /* __FIRMWARE_GOOGLE_MEMCONSOLE_H */
+diff -aruN a/drivers/firmware/coreboot/memconsole/memconsole-of.c b/drivers/firmware/coreboot/memconsole/memconsole-of.c
+--- a/drivers/firmware/coreboot/memconsole/memconsole-of.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/memconsole-of.c	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,61 @@
++/*
++ * memconsole-of.c
++ *
++ * Open Firmware / device tree specific parts of the memory based BIOS console.
++ *
++ * Copyright 2014 Google Inc.
++ */
++
++#include <linux/kernel.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++
++#include "memconsole.h"
++#include "coreboot_table.h"
++
++#define CB_TAG_CBMEM_CONSOLE	0x17
++
++static int memconsole_of_probe(struct platform_device *pdev)
++{
++	int ret;
++	struct lb_cbmem_ref entry;
++
++	ret = coreboot_table_find(CB_TAG_CBMEM_CONSOLE, &entry, sizeof(entry));
++	if (ret)
++		return ret;
++
++	ret = memconsole_coreboot_init(entry.cbmem_addr);
++	if (ret)
++		return ret;
++
++	return memconsole_sysfs_init();
++}
++
++static int memconsole_of_remove(struct platform_device *pdev)
++{
++	memconsole_exit();
++	return 0;
++}
++
++static struct platform_driver memconsole_driver = {
++	.probe = memconsole_of_probe,
++	.remove = memconsole_of_remove,
++	.driver = {
++		.name = "memconsole",
++	},
++};
++
++static int __init platform_memconsole_init(void)
++{
++	struct platform_device *pdev;
++
++	pdev = platform_device_register_simple("memconsole", -1, NULL, 0);
++	if (pdev == NULL)
++		return -ENODEV;
++
++	platform_driver_register(&memconsole_driver);
++
++	return 0;
++}
++
++module_init(platform_memconsole_init);
+diff -aruN a/drivers/firmware/coreboot/memconsole/memconsole-x86.c b/drivers/firmware/coreboot/memconsole/memconsole-x86.c
+--- a/drivers/firmware/coreboot/memconsole/memconsole-x86.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/memconsole-x86.c	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,274 @@
++/*
++ * memconsole-x86.c
++ *
++ * x86/ACPI specific parts of the memory based BIOS console.
++ * (Could be refactored to allow non-x86 ACPI platforms in the future.)
++ *
++ * Copyright 2014 Google Inc.
++ */
++
++#include <asm/bios_ebda.h>
++#include <asm/e820.h>
++#include <linux/acpi.h>
++#include <linux/dmi.h>
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/module.h>
++
++#include "memconsole.h"
++
++#define BIOS_MEMCONSOLE_V1_MAGIC	0xDEADBABE
++#define BIOS_MEMCONSOLE_V2_MAGIC	(('M')|('C'<<8)|('O'<<16)|('N'<<24))
++
++/* coreboot CBMEM constants */
++#define CBMEM_ALIGNMENT   (128 * 1024)
++#define MEMORY_BOUNDARY   (1024 * 1024 * 1024)
++#define MAX_CBMEM_ENTRIES 16
++#define CBMEM_ENTRY_MAGIC 0x434f5245
++#define CBMEM_CONSOLE_ID  0x434f4e53
++#define CBMEM_TOC_ACPI_NAME   "\\CMEM"
++#define CBMEM_CONSOLE_ACPI_NAME  "\\CBMC"
++
++struct biosmemcon_ebda {
++	u32 signature;
++	union {
++		struct {
++			u8  enabled;
++			u32 buffer_addr;
++			u16 start;
++			u16 end;
++			u16 num_chars;
++			u8  wrapped;
++		} __packed v1;
++		struct {
++			u32 buffer_addr;
++			/* Misdocumented as number of pages! */
++			u16 num_bytes;
++			u16 start;
++			u16 end;
++		} __packed v2;
++	};
++} __packed;
++
++struct cbmem_entry {
++	u32 magic;
++	u32 id;
++	u64 base;
++	u64 size;
++} __packed;
++
++static bool coreboot_system;
++
++static int set_coreboot_system_flag(const struct dmi_system_id *unused)
++{
++	coreboot_system = true;
++	return true;
++}
++
++static void found_v1_header(struct biosmemcon_ebda *hdr)
++{
++	pr_info("memconsole: BIOS console v1 EBDA structure found at %p\n", hdr);
++	pr_info("memconsole: BIOS console buffer at 0x%.8x, start = %d, end = %d, num = %d\n",
++	       hdr->v1.buffer_addr, hdr->v1.start,
++	       hdr->v1.end, hdr->v1.num_chars);
++
++	memconsole_setup(phys_to_virt(hdr->v1.buffer_addr), hdr->v1.num_chars);
++}
++
++static void found_v2_header(struct biosmemcon_ebda *hdr)
++{
++	pr_info("memconsole: BIOS console v2 EBDA structure found at %p\n", hdr);
++	pr_info("memconsole: BIOS console buffer at 0x%.8x, start = %d, end = %d, num_bytes = %d\n",
++	       hdr->v2.buffer_addr, hdr->v2.start,
++	       hdr->v2.end, hdr->v2.num_bytes);
++
++	memconsole_setup(phys_to_virt(hdr->v2.buffer_addr + hdr->v2.start),
++			 hdr->v2.end - hdr->v2.start);
++}
++
++static phys_addr_t get_address_from_acpi(acpi_string pathname)
++{
++	acpi_handle handle;
++	unsigned long long addr;
++
++	if (!ACPI_SUCCESS(acpi_get_handle(NULL, pathname, &handle)))
++		return 0;
++
++	if (!ACPI_SUCCESS(acpi_evaluate_integer(handle, pathname, NULL, &addr)))
++		return 0;
++
++	return addr;
++}
++
++/*
++ * The function below tries to find the firmware console log saved in the
++ * appropriate coreboot CBMEM section, using the structures and constants from
++ * coreboot code.
++ *
++ * Coreboot's CBMEM is a structure allocated by coreboot above usable memory
++ * at a 128K aligned address. One of the CBMEM sections could contain the
++ * firmare console log.
++ */
++
++static phys_addr_t check_cbmem(void)
++{
++	struct sysinfo sysi;
++	phys_addr_t top_of_ram, scan_addr;
++
++	/* Get CBMEM TOC address from ACPI if available. */
++	scan_addr = get_address_from_acpi(CBMEM_TOC_ACPI_NAME);
++
++	/*
++	 * Otherwise determine where to start looking for CBMEM signature:
++	 * take the top of usable memory and align it up to 128K boundary.
++	 */
++	if (!scan_addr) {
++		si_meminfo(&sysi);
++		top_of_ram = (phys_addr_t) sysi.totalram << PAGE_SHIFT;
++		scan_addr = ALIGN(top_of_ram, CBMEM_ALIGNMENT) +
++			CBMEM_ALIGNMENT;
++	}
++
++	while (scan_addr % MEMORY_BOUNDARY) {
++		struct cbmem_entry __iomem *pcbm;
++		int i, remap_size = sizeof(struct cbmem_entry) * 16;
++
++		/*
++		 * See if we reached reserved memory. Bail out if so, as it is
++		 * not mappable and is above the region where the CBMEM could
++		 * be.
++		 */
++		if (e820_any_mapped(scan_addr,
++				    scan_addr + remap_size,
++				    E820_RESERVED))
++			break;
++
++		pcbm = ioremap_cache(scan_addr, remap_size);
++		if (!pcbm) {
++			scan_addr += CBMEM_ALIGNMENT;
++			continue;
++		}
++
++		if (pcbm->magic != CBMEM_ENTRY_MAGIC) {
++			iounmap(pcbm);
++			scan_addr += CBMEM_ALIGNMENT;
++			continue;
++		}
++
++		/* CBMEM found. Is the console log there? */
++		for (i = 1; i < MAX_CBMEM_ENTRIES; i++) {
++			if ((pcbm[i].magic == CBMEM_ENTRY_MAGIC) &&
++			    (pcbm[i].id == CBMEM_CONSOLE_ID)) {
++				/* Yes, return its address. */
++				phys_addr_t ret = pcbm[i].base;
++				iounmap(pcbm);
++				return ret;
++			}
++		}
++		iounmap(pcbm);
++		break;
++	}
++
++	pr_warn("memconsole: CBMEM console structure not found!\n");
++	return 0;
++}
++
++/*
++ * Search through the EBDA for the BIOS Memory Console, and
++ * set the global variables to point to it.  Return true if found.
++ */
++static bool memconsole_ebda_init(void)
++{
++	unsigned int address;
++	size_t length, cur;
++
++	address = get_bios_ebda();
++	if (!address) {
++		pr_info("memconsole: BIOS EBDA non-existent.\n");
++		return false;
++	}
++
++	/* EBDA length is byte 0 of EBDA (in KB) */
++	length = *(u8 *)phys_to_virt(address);
++	length <<= 10; /* convert to bytes */
++
++	/*
++	 * Search through EBDA for BIOS memory console structure
++	 * note: signature is not necessarily dword-aligned
++	 */
++	for (cur = 0; cur < length; cur++) {
++		struct biosmemcon_ebda *hdr = phys_to_virt(address + cur);
++
++		/* memconsole v1 */
++		if (hdr->signature == BIOS_MEMCONSOLE_V1_MAGIC) {
++			found_v1_header(hdr);
++			return true;
++		}
++
++		/* memconsole v2 */
++		if (hdr->signature == BIOS_MEMCONSOLE_V2_MAGIC) {
++			found_v2_header(hdr);
++			return true;
++		}
++	}
++
++	pr_info("memconsole: BIOS console EBDA structure not found!\n");
++	return false;
++}
++
++static struct dmi_system_id memconsole_dmi_table[] __initdata = {
++	{
++		.ident = "ThinkPad X220",
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "LENOVO"),
++		},
++	},
++	{
++		.ident = "ThinkPad X220",
++		.callback = set_coreboot_system_flag,
++		.matches = {
++			DMI_MATCH(DMI_BIOS_VENDOR, "coreboot"),
++		},
++	},
++	{}
++};
++MODULE_DEVICE_TABLE(dmi, memconsole_dmi_table);
++
++static bool __init memconsole_find(void)
++{
++	phys_addr_t physaddr;
++
++	if (!dmi_check_system(memconsole_dmi_table))
++		return false;
++
++	if (coreboot_system) {
++		physaddr = get_address_from_acpi(CBMEM_CONSOLE_ACPI_NAME);
++		if (physaddr && memconsole_coreboot_init(physaddr) == 0)
++			return true;
++
++		physaddr = check_cbmem();
++		if (physaddr && memconsole_coreboot_init(physaddr) == 0)
++			return true;
++	}
++
++	return memconsole_ebda_init();
++}
++
++static int __init memconsole_x86_init(void)
++{
++	if (!memconsole_find())
++		return -ENODEV;
++
++	return memconsole_sysfs_init();
++}
++
++static void __exit memconsole_x86_exit(void)
++{
++	memconsole_exit();
++}
++
++module_init(memconsole_x86_init);
++module_exit(memconsole_x86_exit);
++
++MODULE_AUTHOR("Google, Inc.");
++MODULE_LICENSE("GPL");
+diff -aruN a/drivers/firmware/coreboot/memconsole/vpd.c b/drivers/firmware/coreboot/memconsole/vpd.c
+--- a/drivers/firmware/coreboot/memconsole/vpd.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/vpd.c	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,292 @@
++/*
++ *  vpd.c: Driver for exporting VPD content to sysfs.
++ *
++ *  Copyright 2015 Google Inc.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License v2.0 as published by
++ *  the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/kobject.h>
++#include <linux/list.h>
++#include <linux/module.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/sysfs.h>
++
++#include "coreboot_table.h"
++#include "vpd_decode.h"
++
++#define CB_TAG_VPD	0x2c
++#define VPD_CBMEM_MAGIC 0x43524f53
++
++static struct kobject *vpd_kobj;
++
++struct vpd_cbmem {
++	uint32_t magic;
++	uint32_t version;
++	uint32_t ro_size;
++	uint32_t rw_size;
++	uint8_t blob[0];
++};
++
++struct vpd_section {
++	bool enabled;
++	const char *name;
++	char *raw_name;                 /* the string name_raw */
++	struct kobject *kobj;           /* vpd/name directory */
++	char *baseaddr;
++	struct bin_attribute bin_attr;  /* vpd/name_raw bin_attribute */
++	struct list_head attribs;  /* a list of key of type vpd_attrib_info */
++};
++
++struct vpd_attrib_info {
++	char *key;
++	const char *value;
++	struct bin_attribute bin_attr;
++	struct list_head list;
++};
++
++static struct vpd_section ro_vpd;
++static struct vpd_section rw_vpd;
++
++static ssize_t vpd_attrib_read(struct file *filp, struct kobject *kobp,
++		struct bin_attribute *bin_attr, char *buf,
++		loff_t pos, size_t count)
++{
++	struct vpd_attrib_info *info = bin_attr->private;
++
++	return memory_read_from_buffer(buf, count, &pos,
++			info->value, info->bin_attr.size);
++}
++
++static int vpd_section_attrib_add(const uint8_t *key, int32_t key_len,
++		const uint8_t *value, int32_t value_len,
++		void *arg)
++{
++	int ret;
++	struct vpd_section *sec = arg;
++	struct vpd_attrib_info *info = kzalloc(sizeof(struct vpd_attrib_info),
++			GFP_KERNEL);
++
++	info->key = kzalloc(sizeof(key_len + 1), GFP_KERNEL);
++	if (!info->key)
++		return -ENOMEM;
++
++	memcpy(info->key, key, key_len);
++
++	sysfs_bin_attr_init(&info->bin_attr);
++	info->bin_attr.attr.name = info->key;
++	info->bin_attr.attr.mode = 0444;
++	info->bin_attr.size = value_len;
++	info->bin_attr.read = vpd_attrib_read;
++	info->bin_attr.private = info;
++
++	info->value = value;
++
++	INIT_LIST_HEAD(&info->list);
++	list_add_tail(&info->list, &sec->attribs);
++
++	ret = sysfs_create_bin_file(sec->kobj, &info->bin_attr);
++	if (ret) {
++		kfree(info->key);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void vpd_section_attrib_destroy(struct vpd_section *sec)
++{
++	struct vpd_attrib_info *info;
++	struct vpd_attrib_info *temp;
++
++	list_for_each_entry_safe(info, temp, &sec->attribs, list) {
++		kfree(info->key);
++		sysfs_remove_bin_file(sec->kobj, &info->bin_attr);
++		kfree(info);
++	}
++}
++
++static ssize_t vpd_section_read(struct file *filp, struct kobject *kobp,
++		struct bin_attribute *bin_attr, char *buf,
++		loff_t pos, size_t count)
++{
++	struct vpd_section *sec = bin_attr->private;
++
++	return memory_read_from_buffer(buf, count, &pos,
++			sec->baseaddr, sec->bin_attr.size);
++}
++
++
++static int vpd_section_create_attribs(struct vpd_section *sec)
++{
++	int32_t consumed;
++	int ret;
++
++	consumed = 0;
++	do {
++		ret = decode_vpd_string(sec->bin_attr.size, sec->baseaddr,
++				&consumed, vpd_section_attrib_add, sec);
++	} while (ret == VPD_OK);
++	return 0;
++}
++
++static int vpd_section_init(const char *name, struct vpd_section *sec,
++		phys_addr_t physaddr, size_t size)
++{
++	int ret;
++	int raw_len;
++
++	sec->baseaddr = ioremap_cache(physaddr, size);
++	if (sec->baseaddr == NULL)
++		return -ENOMEM;
++
++	sec->name = name;
++
++	/* We want to export the raw partion with name ${name}_raw */
++	raw_len = strlen(name) + 5;
++	sec->raw_name = kzalloc(raw_len, GFP_KERNEL);
++	strncpy(sec->raw_name, name, raw_len);
++	strncat(sec->raw_name, "_raw", raw_len);
++
++	sysfs_bin_attr_init(&sec->bin_attr);
++	sec->bin_attr.attr.name = sec->raw_name;
++	sec->bin_attr.attr.mode = 0444;
++	sec->bin_attr.size = size;
++	sec->bin_attr.read = vpd_section_read;
++	sec->bin_attr.private = sec;
++
++	ret = sysfs_create_bin_file(vpd_kobj, &sec->bin_attr);
++	if (ret)
++		goto fail;
++
++	sec->kobj = kobject_create_and_add(name, vpd_kobj);
++	if (!sec->kobj) {
++		ret = -EINVAL;
++		goto fail2;
++	}
++
++	INIT_LIST_HEAD(&sec->attribs);
++	vpd_section_create_attribs(sec);
++
++	sec->enabled = true;
++
++	return 0;
++
++fail2:
++	sysfs_remove_bin_file(vpd_kobj, &sec->bin_attr);
++fail:
++	kfree(sec->raw_name);
++	iounmap(sec->baseaddr);
++	return ret;
++}
++
++static int vpd_section_destroy(struct vpd_section *sec)
++{
++	if (sec->enabled) {
++		vpd_section_attrib_destroy(sec);
++		kobject_del(sec->kobj);
++		sysfs_remove_bin_file(vpd_kobj, &sec->bin_attr);
++		kfree(sec->raw_name);
++		iounmap(sec->baseaddr);
++	}
++	return 0;
++}
++
++static int init_vpd_sections(phys_addr_t physaddr)
++{
++	struct vpd_cbmem __iomem *temp;
++	struct vpd_cbmem header;
++	int ret = 0;
++
++	temp = ioremap_cache(physaddr, sizeof(struct vpd_cbmem));
++	if (temp == NULL) {
++		return -ENOMEM;
++	}
++
++	memcpy_fromio(&header, temp, sizeof(struct vpd_cbmem));
++	iounmap(temp);
++
++	if (header.magic != VPD_CBMEM_MAGIC)
++		return -ENODEV;
++
++	if (header.ro_size) {
++		ret = vpd_section_init("ro", &ro_vpd,
++				physaddr + sizeof(struct vpd_cbmem),
++				header.ro_size);
++		if (ret)
++			return ret;
++	}
++
++	if (header.rw_size) {
++		ret = vpd_section_init("rw", &rw_vpd,
++				physaddr + sizeof(struct vpd_cbmem) +
++				header.ro_size, header.rw_size);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static int vpd_probe(struct platform_device *pdev)
++{
++	int ret;
++	struct lb_cbmem_ref entry;
++
++	ret = coreboot_table_find(CB_TAG_VPD, &entry, sizeof(entry));
++	if (ret)
++		return ret;
++
++	return init_vpd_sections(entry.cbmem_addr);
++}
++
++static struct platform_driver vpd_driver = {
++	.probe = vpd_probe,
++	.driver = {
++		.name = "vpd",
++	},
++};
++
++static int __init platform_vpd_init(void)
++{
++	struct platform_device *pdev;
++
++	pdev = platform_device_register_simple("vpd", -1, NULL, 0);
++	if (pdev == NULL)
++		return -ENODEV;
++
++	vpd_kobj = kobject_create_and_add("vpd", firmware_kobj);
++	if (!vpd_kobj)
++		return -ENOMEM;
++
++	memset(&ro_vpd, 0, sizeof(ro_vpd));
++	memset(&rw_vpd, 0, sizeof(rw_vpd));
++
++	platform_driver_register(&vpd_driver);
++
++	return 0;
++}
++
++static void __exit platform_vpd_exit(void)
++{
++	vpd_section_destroy(&ro_vpd);
++	vpd_section_destroy(&rw_vpd);
++	kobject_del(vpd_kobj);
++}
++
++module_init(platform_vpd_init);
++module_exit(platform_vpd_exit);
++
++MODULE_AUTHOR("Google, Inc.");
++MODULE_LICENSE("GPL");
+diff -aruN a/drivers/firmware/coreboot/memconsole/vpd_decode.c b/drivers/firmware/coreboot/memconsole/vpd_decode.c
+--- a/drivers/firmware/coreboot/memconsole/vpd_decode.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/vpd_decode.c	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,128 @@
++/*
++ * vpd_decode.c
++ *
++ * Google VPD decoding routines.
++ *
++ * Copyright 2015 Google Inc.
++ *
++ * This file is taken from the ChromiumOS VPD project and modified to
++ * match the kernel coding style.
++ *
++ * The license is attached below and can be found in /LICENSE of the chromiumos
++ * source repository.
++ *
++ * Copyright (c) 2006-2009 The Chromium OS Authors. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met:
++ *
++ *    * Redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer.
++ *    * Redistributions in binary form must reproduce the above
++ * copyright notice, this list of conditions and the following disclaimer
++ * in the documentation and/or other materials provided with the
++ * distribution.
++ *    * Neither the name of Google Inc. nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "vpd_decode.h"
++
++#include <linux/export.h>
++
++static int decode_len(const int32_t max_len, const uint8_t *in,
++		int32_t *length, int32_t *decoded_len)
++{
++	uint8_t more;
++	int i = 0;
++
++	if (!length)
++		return VPD_FAIL;
++
++	if (!decoded_len)
++		return VPD_FAIL;
++
++	*length = 0;
++	do {
++		if (i >= max_len)
++			return VPD_FAIL;
++		more = in[i] & 0x80;
++		*length <<= 7;
++		*length |= in[i] & 0x7f;
++		++i;
++	} while (more);
++
++	*decoded_len = i;
++
++	return VPD_OK;
++}
++
++/* Sequentially decodes type, key, and value. */
++int decode_vpd_string(const int32_t max_len, const uint8_t *input_buf,
++		int32_t *consumed, vpd_decode_callback callback,
++		void *callback_arg)
++{
++	int type;
++	int32_t key_len, value_len;
++	int32_t decoded_len;
++	const uint8_t *key, *value;
++
++	/* type */
++	if (*consumed >= max_len)
++		return VPD_FAIL;
++
++	type = input_buf[*consumed];
++	switch (type) {
++	case VPD_TYPE_INFO:
++	case VPD_TYPE_STRING:
++		(*consumed)++;
++
++		/* key */
++		if (VPD_OK != decode_len(max_len - *consumed,
++					&input_buf[*consumed], &key_len,
++					&decoded_len) ||
++				*consumed + decoded_len >= max_len) {
++			return VPD_FAIL;
++		}
++
++		*consumed += decoded_len;
++		key = &input_buf[*consumed];
++		*consumed += key_len;
++
++		/* value */
++		if (VPD_OK != decode_len(max_len - *consumed,
++					&input_buf[*consumed], &value_len,
++					&decoded_len) ||
++				*consumed + decoded_len > max_len) {
++			return VPD_FAIL;
++		}
++		*consumed += decoded_len;
++		value = &input_buf[*consumed];
++		*consumed += value_len;
++
++		if (type == VPD_TYPE_STRING)
++			return callback(key, key_len, value, value_len,
++					callback_arg);
++
++		return VPD_OK;
++
++	default:
++		return VPD_FAIL;
++	}
++	return VPD_OK;
++}
++EXPORT_SYMBOL(decode_vpd_string);
+diff -aruN a/drivers/firmware/coreboot/memconsole/vpd_decode.h b/drivers/firmware/coreboot/memconsole/vpd_decode.h
+--- a/drivers/firmware/coreboot/memconsole/vpd_decode.h	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/firmware/coreboot/memconsole/vpd_decode.h	2015-09-30 21:45:35.025167640 +0000
+@@ -0,0 +1,80 @@
++/*
++ * vpd_decode.c
++ *
++ * Google VPD decoding routines.
++ *
++ * Copyright 2015 Google Inc.
++ *
++ * This file is taken from the ChromiumOS VPD project and modified to
++ * match the kernel coding style.
++ *
++ * The license is attached below and can be found in /LICENSE of the chromiumos
++ * source repository.
++ *
++ * Copyright (c) 2006-2009 The Chromium OS Authors. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met:
++ *
++ *    * Redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer.
++ *    * Redistributions in binary form must reproduce the above
++ * copyright notice, this list of conditions and the following disclaimer
++ * in the documentation and/or other materials provided with the
++ * distribution.
++ *    * Neither the name of Google Inc. nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __VPD_DECODE_H
++#define __VPD_DECODE_H
++
++#include <linux/types.h>
++
++enum {
++	VPD_OK = 0,
++	VPD_FAIL,
++};
++
++enum {
++	VPD_TYPE_TERMINATOR = 0,
++	VPD_TYPE_STRING,
++	VPD_TYPE_INFO                = 0xfe,
++	VPD_TYPE_IMPLICIT_TERMINATOR = 0xff,
++};
++
++/* Callback for decode_vpd_string to invoke. */
++typedef int vpd_decode_callback(const uint8_t *key, int32_t key_len,
++		const uint8_t *value, int32_t value_len, void *arg);
++
++/* Given the encoded string, this function invokes callback with extracted
++ * (key, value). The *consumed will be plused the number of bytes consumed in
++ * this function.
++ *
++ * The input_buf points to the first byte of the input buffer.
++ *
++ * The *consumed starts from 0, which is actually the next byte to be decoded.
++ * It can be non-zero to be used in multiple calls.
++ *
++ * If one entry is successfully decoded, sends it to callback and returns the
++ * result.
++ */
++int decode_vpd_string(const int32_t max_len, const uint8_t *input_buf,
++		int32_t *consumed, vpd_decode_callback callback,
++		void *callback_arg);
++
++#endif  /* __VPD_DECODE_H */
+diff -aruN a/drivers/firmware/Kconfig b/drivers/firmware/Kconfig
+--- a/drivers/firmware/Kconfig	2015-08-03 16:30:08.000000000 +0000
++++ b/drivers/firmware/Kconfig	2015-09-30 21:45:45.917204596 +0000
+@@ -137,6 +137,7 @@
+ 	depends on ARM || ARM64
+ 
+ source "drivers/firmware/google/Kconfig"
++source "drivers/firmware/coreboot/Kconfig"
+ source "drivers/firmware/efi/Kconfig"
+ 
+ endmenu
