@@ -4,6 +4,8 @@ This repostory contains [buildroot](http://buildroot.uclibc.org/) configurations
 
 It includes three different configuration: the default config `coreboot_defconfig`, a minimal config `coreboot_minimal_defconfig` which can fit on the X230 without hardware modifications (but lacks some extra goodies), and a grsec configuration for both of these.
 
+It comes out of the box with some useful goodies such as fully randomized MAC and hostname.
+
 Some of the coreboot utility (ie: cbfstool, ifdtool, and nvramtool) packages are built from a local source. you will need to edit this path in `packages/coreboot/*/*.mk`
 
 Building cbfstool currently requires a patch in the local coreboot tree which has not yet been added upstream:
