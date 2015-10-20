@@ -6,6 +6,38 @@ It includes three different configuration: the default config `coreboot_defconfi
 
 Some of the coreboot utility (ie: cbfstool, ifdtool, and nvramtool) packages are built from a local source. you will need to edit this path in `packages/coreboot/*/*.mk`
 
+Building cbfstool currently requires a patch in the local coreboot tree which has not yet been added upstream:
+
+```
+diff --git a/util/cbfstool/Makefile.inc b/util/cbfstool/Makefile.inc
+index 976f0c2..8e04670 100644
+--- a/util/cbfstool/Makefile.inc
++++ b/util/cbfstool/Makefile.inc
+@@ -45,7 +45,7 @@ TOOLCFLAGS ?= -std=c99 -Werror -Wall -Wextra
+ TOOLCFLAGS += -Wcast-qual -Wmissing-prototypes -Wredundant-decls -Wshadow
+ TOOLCFLAGS += -Wstrict-prototypes -Wwrite-strings
+ TOOLCPPFLAGS ?= -D_DEFAULT_SOURCE # memccpy() from string.h
+-TOOLCPPFLAGS += -D_XOPEN_SOURCE=700 # strdup() from string.h
++TOOLCPPFLAGS += -D_XOPEN_SOURCE=700 -D__USE_XOPEN_EXTENDED # strdup() from string.h
+ TOOLCPPFLAGS += -I$(top)/util/cbfstool/flashmap
+ TOOLCPPFLAGS += -I$(top)/util/cbfstool
+ TOOLCPPFLAGS += -I$(objutil)/cbfstool
+diff --git a/util/cbfstool/cbfs_image.c b/util/cbfstool/cbfs_image.c
+index c40bd66..36438e9 100644
+--- a/util/cbfstool/cbfs_image.c
++++ b/util/cbfstool/cbfs_image.c
+@@ -24,6 +24,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <strings.h>
++#include <unistd.h>
+ 
+ #include "common.h"
+ #include "cbfs_image.h"
+```
+
+To use the project with Buildroot:
+
 ```
 $ git clone https://github.com/xsmurf/coreboot_buildroot_project.git
 $ export BR_PROJECT=$PWD/coreboot_buildroot_project
