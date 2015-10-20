@@ -6,6 +6,7 @@ It includes three different configuration: the default config `coreboot_defconfi
 
 Some of the coreboot utility (ie: cbfstool, ifdtool, and nvramtool) packages are built from a local source. you will need to edit this path in `packages/coreboot/*/*.mk`
 
+```
 $ git clone https://github.com/xsmurf/coreboot_buildroot_project.git
 $ export BR_PROJECT=$PWD/coreboot_buildroot_project
 $ wget <buildroot-release.tgz>
@@ -13,6 +14,7 @@ $ tar -xjf <buildroot-release.tgz>
 $ cd <buildroot-release>
 $ make BR2_EXTERNAL=$BR_PROJECT coreboot_defconfig
 $ make
+```
 
 After making changes in buildroot with `make menuconfig`, `make linux-menuconfig`, or `make busybox-menuconfig`, you use the included `$BR_PROJECT/scripts/save.sh` to export your changes back to the project.
 
