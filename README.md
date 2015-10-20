@@ -1,6 +1,6 @@
 # Coreboot Buildroot
 
-This repostory contains [buildroot](http://buildroot.uclibc.org/) configurations, patches, and additions meant to build a useful linux+busybox distribution which can be embedded on the eeprom of ThinkPad X220/X230 machines running [Coreboot](https://www.coreboot.org).
+This repostory contains [buildroot](http://buildroot.uclibc.org/) configurations, patches, and additions meant to build a useful linux+busybox distribution which can be embedded on the flash memory of ThinkPad X220/X230 machines running [Coreboot](https://www.coreboot.org).
 
 It includes three different configuration: the default config `coreboot_defconfig`, a minimal config `coreboot_minimal_defconfig` which can fit on the X230 without hardware modifications (but lacks some extra goodies), and a grsec configuration for both of these.
 
