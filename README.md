@@ -4,7 +4,7 @@ This repostory contains [buildroot](http://buildroot.uclibc.org/) configurations
 
 It includes three different configuration: the default config `coreboot_defconfig`, a minimal config `coreboot_minimal_defconfig` which can fit on the X230 without hardware modifications (but lacks some extra goodies), and a grsec configuration for both of these.
 
-Installing on the X220 requires hardware modification as the flash has to be upgraded to 16MiB. We used the W25Q128.V model.
+Installing on the X220 requires hardware modification as the flash has to be upgraded to 16MiB. We used the W25Q128.V model. This requires further patching, however this is out of the scope of this guide.
 
 It comes out of the box with some useful goodies such as fully randomized MAC and hostname.
 
